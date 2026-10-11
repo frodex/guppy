@@ -17,19 +17,17 @@
   /* display mode (?display=1): black, fish only */
   body.display { background: #000; }
   body.display #ui, body.display #info { display: none; }
-  #hint { display: none; position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 3;
-    color: #ffffff55; font-size: 12px; letter-spacing: .05em; transition: opacity 1.2s; pointer-events: none; }
-  body.display #hint { display: block; }
   body.display.idle, body.display.idle #c { cursor: none; }
-  #back { display: none; position: fixed; top: 12px; right: 14px; z-index: 4; background: #111a; color: #cfd8e3;
-    border: 1px solid #333; transition: opacity .6s; }
+  #back { display: none; position: fixed; top: 10px; right: 10px; z-index: 4; width: 28px; height: 28px; padding: 4px; background: #0008; color: #cfd8e3;
+    border: 0; border-radius: 50%; transition: opacity .6s; opacity: .7; }
+  #back svg { width: 100%; height: 100%; display: block; }
   body.display #back { display: block; }
   body.display.idle #back { opacity: 0; pointer-events: none; }
-  #credit { position: fixed; right: 10px; bottom: 8px; z-index: 5; font-size: 11px; color: #ffffff88; }
-  #credit a { color: #ffffffaa; text-decoration: underline; }
-  #ver { position: fixed; left: 10px; bottom: 8px; z-index: 5; font-size: 9px; color: #ffffff55; font-variant-numeric: tabular-nums; pointer-events: none; }
+  #about { flex-basis: 100%; margin-top: 6px; padding-top: 8px; border-top: 1px solid #ffffff22; font-size: 12px; line-height: 1.6; }
+  #about h3 { margin: 0 0 4px; font-size: 12px; color: #9fe9ff; }
+  #about a { color: #bfeaff; text-decoration: underline; }
+  #ver { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
   body.display #info { display: none; }
-  body.display #hint { bottom: 30px; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -51,12 +49,15 @@
   <button id="dn">−</button><span id="ampv">0.02</span><button id="up">+</button>
   &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
   &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
+  <div id="about"><h3>About / Credits</h3>
+    <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
+    <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
+    <div>Display mode: click or F for fullscreen, scroll to zoom, S for settings.</div>
+    <div>Version: <span id="ver"></span></div>
+  </div>
 </div>
-<button id="back" title="back to settings (S)">⚙ settings</button>
-<div id="hint">click or F: fullscreen · scroll: zoom · S: settings</div>
+<button id="back" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
 <div id="info">drag to orbit · tune the orientation and bend, then press ▶ display</div>
-<div id="credit">"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
-<div id="ver"></div>
 <script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -446,7 +447,6 @@ if (DISPLAY) {
   };
   document.getElementById("back").addEventListener("click", e => { e.stopPropagation(); toSettings(); });
   addEventListener("keydown", e => { if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) toSettings(); });
-  const hint = document.getElementById("hint"); setTimeout(() => { hint.style.opacity = 0; }, 4000);
   let idleT = 0; const wake = () => { document.body.classList.remove("idle"); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add("idle"), 3000); };
   addEventListener("pointermove", wake); wake();
   pickTarget(0);
