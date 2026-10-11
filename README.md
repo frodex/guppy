@@ -21,3 +21,5 @@ then open http://127.0.0.1:8099/
 - Page code: MIT, see `LICENSE`.
 - three.js: MIT, see `site/vendor/three/LICENSE`.
 - Model "Guppies" by dannzjs: CC BY 4.0, see `CREDITS.md`.
+
+Live: https://betta.stream
