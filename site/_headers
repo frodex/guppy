@@ -8,6 +8,10 @@
   Cache-Control: public, max-age=300, must-revalidate
 /
   Cache-Control: public, max-age=300, must-revalidate
+/goldfish
+  Cache-Control: public, max-age=300, must-revalidate
+/goldfish/*
+  Cache-Control: public, max-age=300, must-revalidate
 /version.txt
   Cache-Control: public, max-age=60, must-revalidate
 /vendor/*
