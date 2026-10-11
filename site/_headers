@@ -1,0 +1,16 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+/index.html
+  Cache-Control: public, max-age=300, must-revalidate
+/
+  Cache-Control: public, max-age=300, must-revalidate
+/version.txt
+  Cache-Control: public, max-age=60, must-revalidate
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+/*.glb
+  Cache-Control: public, max-age=31536000, immutable

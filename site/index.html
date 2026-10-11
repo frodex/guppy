@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>betta.stream guppy</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a3a5a; font: 13px system-ui, sans-serif; color: #d6f3ff; }
+  #c { position: fixed; inset: 0; }
+  #ui { position: fixed; top: 10px; left: 10px; z-index: 2; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+    background: rgba(6,28,40,.65); padding: 8px 10px; border-radius: 10px; max-width: 96vw; }
+  button { padding: 6px 10px; border: 0; border-radius: 6px; background: #1b8a6b; color: #fff; cursor: pointer; font: inherit; }
+  button.on { background: #ffd23a; color: #222; font-weight: 700; }
+  b { color: #9fe9ff; }
+  #info { position: fixed; bottom: 10px; left: 12px; z-index: 2; opacity: .85; font-variant-numeric: tabular-nums; }
+  /* display mode (?display=1): black, fish only */
+  body.display { background: #000; }
+  body.display #ui, body.display #info { display: none; }
+  #hint { display: none; position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 3;
+    color: #ffffff55; font-size: 12px; letter-spacing: .05em; transition: opacity 1.2s; pointer-events: none; }
+  body.display #hint { display: block; }
+  body.display.idle, body.display.idle #c { cursor: none; }
+  #back { display: none; position: fixed; top: 12px; right: 14px; z-index: 4; background: #111a; color: #cfd8e3;
+    border: 1px solid #333; transition: opacity .6s; }
+  body.display #back { display: block; }
+  body.display.idle #back { opacity: 0; pointer-events: none; }
+  #credit { position: fixed; right: 10px; bottom: 8px; z-index: 5; font-size: 11px; color: #ffffff88; }
+  #credit a { color: #ffffffaa; text-decoration: underline; }
+  #ver { position: fixed; left: 10px; bottom: 8px; z-index: 5; font-size: 9px; color: #ffffff55; font-variant-numeric: tabular-nums; pointer-events: none; }
+  body.display #info { display: none; }
+  body.display #hint { bottom: 30px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+}}
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <button id="swim">swim test: OFF</button>
+  &nbsp;<b>nose</b>
+  X<button data-rot="x" data-d="-1">−</button><button data-rot="x" data-d="1">+</button>
+  Y<button data-rot="y" data-d="-1">−</button><button data-rot="y" data-d="1">+</button>
+  Z<button data-rot="z" data-d="-1">−</button><button data-rot="z" data-d="1">+</button>
+  <button id="step">step 90°</button><button id="rreset">reset</button>
+  &nbsp;<b>bend</b><button data-ax="x">X</button><button data-ax="y">Y</button><button data-ax="z" class="on">Z</button>
+  <button id="dn">−</button><span id="ampv">0.02</span><button id="up">+</button>
+  &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
+  &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
+</div>
+<button id="back" title="back to settings (S)">⚙ settings</button>
+<div id="hint">click or F: fullscreen · scroll: zoom · S: settings</div>
+<div id="info">drag to orbit · tune the orientation and bend, then press ▶ display</div>
+<div id="credit">"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
+<div id="ver"></div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+let AX = "z", AMP = 0.02, CLIP = true, PROC = true, SWIM = false;
+const CORR = { x: 0, y: 0, z: 0 };                       // nose-correction euler (90° steps)
+const Q = new URLSearchParams(location.search);
+// baked-in defaults for the bare URL; any query param overrides them
+for (const [k, v] of Object.entries({ display: "1", m: "guppies.glb", rx: "20", ry: "0", rz: "0", amp: "0.1", ax: "z", clip: "1", proc: "1" })) if (!Q.has(k)) Q.set(k, v);
+const DISPLAY = Q.get("display") === "1";                // display mode: black, fish only, natural wander path
+// per-model presets = the values the school uses (index.html G1/G2); URL params override
+// guppies.glb: the Owner's tuned load defaults (2026-10-04: rot X 20°, bend z, amp 0.1 — swims nose-first)
+for (const a of ["x", "y", "z"]) if (Q.has("r" + a)) CORR[a] = +Q.get("r" + a);
+if (Q.has("amp")) AMP = +Q.get("amp");
+if (Q.has("ax")) AX = Q.get("ax");
+if (Q.has("clip")) CLIP = Q.get("clip") === "1";
+if (Q.has("proc")) PROC = Q.get("proc") === "1";
+if (DISPLAY) document.body.classList.add("display");
+const cv = document.getElementById("c"), info = document.getElementById("info");
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color(DISPLAY ? 0x000000 : 0x0c3a52);
+const cam = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100); cam.position.set(0, DISPLAY ? 0 : 1, DISPLAY ? 10 : 7);
+function rs() { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
+addEventListener("resize", rs); rs();
+const controls = new OrbitControls(cam, cv); controls.enableDamping = true; controls.enabled = !DISPLAY;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x335577, 1.4));
+const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(2, 5, 4); scene.add(dl);
+scene.add(new THREE.AmbientLight(0x88aacc, 0.6));
+if (!DISPLAY) scene.add(new THREE.GridHelper(10, 10, 0x224455, 0x183a4a));
+const ARROW = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 2.4, 0xff5566); if (!DISPLAY) scene.add(ARROW); // shows swim direction
+
+const outer = new THREE.Group(), corr = new THREE.Group();   // outer = lookAt; corr = nose correction
+outer.add(corr); scene.add(outer);
+let mixer = null, bones = [], action = null;
+const MODEL = "guppies.glb";   // the only model shipped with this site
+new GLTFLoader().load(MODEL, g => {
+  const root = g.scene;
+  const box = new THREE.Box3().setFromObject(root), sz = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+  const scl = (DISPLAY ? 1.7 : 3.2) / Math.max(sz.x, sz.y, sz.z);   // smaller in display mode: room to roam
+  const pivot = new THREE.Group(); pivot.add(root); root.position.set(-c.x, -c.y, -c.z);
+  pivot.scale.setScalar(scl); corr.add(pivot);
+  root.traverse(n => {
+    if (n.isBone) { bones.push(n); n.userData.q0 = n.quaternion.clone(); }
+    if (n.isMesh && n.material) (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
+      m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide; m.needsUpdate = true;
+    });
+  });
+  // tail-weight each bone by its REST position along the body (matches the school) so the wave whips the real tail, not array-order bones
+  corr.updateMatrixWorld(true);
+  const invRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const pts = bones.map(bn => bn.getWorldPosition(new THREE.Vector3()).applyMatrix4(invRoot));
+  if (pts.length) {
+    const bb = new THREE.Box3().setFromPoints(pts), sz = bb.getSize(new THREE.Vector3());
+    const ax = sz.x >= sz.y && sz.x >= sz.z ? "x" : (sz.y >= sz.z ? "y" : "z");
+    const lo = bb.min[ax], len = (bb.max[ax] - bb.min[ax]) || 1;
+    const flip = Q.get("flip") === "1";       // tail defaults to the min-axis end (nose-up models); ?flip=1 to swap
+    bones.forEach((bn, i) => { const v = (pts[i][ax] - lo) / len; bn.userData.tw = flip ? v : (1 - v); });
+    if (DISPLAY) {   // turn about the body's middle (skeleton centroid): the bbox centre sits at the nose, so turns swung the whole body round the head
+      const cen = new THREE.Vector3(); pts.forEach(q => cen.add(q)); cen.divideScalar(pts.length);
+      root.position.set(-cen.x, -cen.y, -cen.z);
+    }
+  }
+  if (DISPLAY && bones.length > 2) {
+    let tb = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tb.userData.tw || 0)) tb = bn;
+    outer.updateMatrixWorld(true); const p0 = tb.getWorldPosition(new THREE.Vector3());
+    for (const bn of bones) { const tw = bn.userData.tw || 0; if (tw > 0.08 && tw < 0.72) { if (AX === "x") bn.rotateX(0.08); else if (AX === "y") bn.rotateY(0.08); else bn.rotateZ(0.08); } }
+    outer.updateMatrixWorld(true); const p1 = tb.getWorldPosition(new THREE.Vector3());
+    BEND_SIGN = (p1.x - p0.x) >= 0 ? 1 : -1;            // outer is identity here: local +X = world +X
+    for (const bn of bones) bn.quaternion.copy(bn.userData.q0);
+  }
+  if (DISPLAY && bones.length > 2) setupFins();
+  mixer = new THREE.AnimationMixer(root);
+  if (g.animations && g.animations[0]) { action = mixer.clipAction(g.animations[0]); action.play(); }  // rig-less models have no clip
+  loop();
+});
+
+for (const b of document.querySelectorAll("[data-ax]")) b.onclick = () => { AX = b.dataset.ax; document.querySelectorAll("[data-ax]").forEach(x => x.classList.toggle("on", x === b)); };
+let STEP = 90;
+for (const b of document.querySelectorAll("[data-rot]")) b.onclick = () => { const a = b.dataset.rot; CORR[a] = Math.round((CORR[a] + STEP * (+b.dataset.d)) * 100) / 100; };
+document.getElementById("step").onclick = e => { STEP = STEP === 90 ? 5 : 90; e.target.textContent = "step " + STEP + "°"; e.target.classList.toggle("on", STEP === 5); };
+document.getElementById("rreset").onclick = () => { CORR.x = CORR.y = CORR.z = 0; };
+const ampv = document.getElementById("ampv"); ampv.textContent = AMP;
+document.getElementById("up").onclick = () => { AMP = +(AMP + 0.005).toFixed(3); ampv.textContent = AMP; };
+document.getElementById("dn").onclick = () => { AMP = Math.max(0, +(AMP - 0.005).toFixed(3)); ampv.textContent = AMP; };
+document.getElementById("clip").onclick = e => { CLIP = !CLIP; e.target.classList.toggle("on", CLIP); };
+document.getElementById("proc").onclick = e => { PROC = !PROC; e.target.classList.toggle("on", PROC); };
+document.getElementById("disp").onclick = () => {
+  const u = new URLSearchParams({ display: "1", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, amp: AMP, ax: AX, clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
+  location.href = location.pathname + "?" + u;
+};
+document.getElementById("swim").onclick = e => { SWIM = !SWIM; e.target.textContent = "swim test: " + (SWIM ? "ON" : "OFF"); e.target.classList.toggle("on", SWIM); };
+
+const tmp = new THREE.Vector3(), D2R = Math.PI / 180;
+let last = performance.now(), lastDt = 0;
+
+// ---- display mode: natural wander -------------------------------------------------------------
+// Steer toward a random target inside the visible volume with a capped turn rate (smooth arcs),
+// pick a new target on arrival or after a while, ease speed between targets, stay mostly level,
+// bank into turns, and beat the tail faster when swimming faster.
+const AXS = new THREE.Vector3(), P = new THREE.Vector3(), V = new THREE.Vector3(1, 0, 0), TGT = new THREE.Vector3(), DES = new THREE.Vector3(), PRV = new THREE.Vector3();
+let speed = 0.9, tSpeed = 0.9, nextPick = 0, turn = 0, phase = 0;
+// ---- gait (display mode): burst-and-coast + C-bend turns + springy follow-through ----------------
+// Basis (fish-locomotion literature): midline = travelling wave A(s)·sin(ωt − ks), envelope rising
+// ~quadratically head→tail, wavelength ≈ 1 body (k ≈ 2π); tail-beat rate scales with speed (Strouhal
+// ≈ 0.3); small fish (guppies, tetras) swim BURST-AND-COAST — a few beats, then a straight passive glide;
+// turns: the body bends into a C toward the turn, the bend travels tailward and the peduncle/tail
+// counter-swings; fins/tail lag the body (secondary motion).
+let gait = "coast", gaitEnd = 0, coastStart = 0, beat = 0.3, omega = 5, steer = 0, BEND_SIGN = 1;
+const DRAG = 0.9, UPV = new THREE.Vector3(0, 1, 0), LAT = new THREE.Vector3(), VEL = new THREE.Vector3(0.9, 0, 0), LATV = new THREE.Vector3();
+let yawRate = 0, atWall = false, wallTgt = false, wallSince = 0, pressLat = 0, pressY = 0, impact = 0, ram = 0;   // ram: into-wall speed measured BEFORE the wall stops it   // impact: extra bend from ramming the glass   // wall pressure (signed, body frame / vertical)
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+// The TANK is fixed in world space: its walls are the display edges at the DEFAULT zoom, per depth
+// (closer to the camera = narrower), minus the fish's half-length so the nose can reach the very edge.
+// Zoom = the FISH's size (camera never moves), so at any zoom the walls stay at the screen edges and a
+// bigger fish still swims right up to them; clearance, speed and arrival distance scale with it.
+const CAM0 = 10, TANK_NEAR = 2.0, TANK_FAR = -6.0, HALF_LEN = 0.45;   // tank depth 8 (2× the old ±2): room to swim away from the viewer   // small centre clearance: the BODY collision (wallCollide) does the real work
+let ZOOM = 1, zoomTo = 1, zoomT = -1e9;
+function walls(z) {
+  const hh = (CAM0 - z) * Math.tan(cam.fov * D2R / 2), hw = hh * cam.aspect;
+  return { x: Math.max(0.3, hw - HALF_LEN * ZOOM), y: Math.max(0.3, hh - HALF_LEN * 0.7 * ZOOM) };
+}
+// ghost tank: the fish-centre volume drawn as a wireframe while zooming, fading out after
+const ghostGeo = new THREE.BufferGeometry(), ghostMat = new THREE.LineBasicMaterial({ color: 0x5fd4ff, transparent: true, opacity: 0, depthWrite: false });
+const ghost = new THREE.LineSegments(ghostGeo, ghostMat); ghost.visible = false;
+function updateGhost(t) {
+  const a = 0.55 * clamp(1 - (t - zoomT - 0.6) / 1.4, 0, 1);    // full while zooming, fades ~1.4s after the last wheel tick
+  ghostMat.opacity = a; ghost.visible = a > 0.01;
+  if (!ghost.visible) return;
+  const tank = z => { const hh = (CAM0 - z) * Math.tan(cam.fov * D2R / 2); return { x: hh * cam.aspect * 0.995, y: hh * 0.995 }; };
+  const f = tank(TANK_NEAR), b = tank(TANK_FAR), c = [];
+  const C = (w, z) => [[-w.x, -w.y, z], [w.x, -w.y, z], [w.x, w.y, z], [-w.x, w.y, z]];
+  const near = C(f, TANK_NEAR), far = C(b, TANK_FAR);
+  for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; c.push(...near[i], ...near[j], ...far[i], ...far[j], ...near[i], ...far[i]); }
+  ghostGeo.setAttribute("position", new THREE.Float32BufferAttribute(c, 3));
+}
+function pickTarget(t) {
+  const tz = TANK_FAR * 0.85 + Math.random() * (TANK_NEAR * 0.6 - TANK_FAR * 0.85), b = walls(tz);   // depth first, then the walls AT that depth
+  TGT.set((Math.random() * 2 - 1) * b.x * 0.95, (Math.random() * 2 - 1) * b.y * 0.85, tz);   // anywhere in the tank, edges included
+  wallTgt = Math.random() < 0.4;                          // ~40%: swim right up to a wall and brush along it
+  if (wallTgt) { const wz = walls(TGT.z); if (Math.random() < 0.6) TGT.x = Math.sign(TGT.x || 1) * wz.x * 1.25; else TGT.y = Math.sign(TGT.y || 1) * wz.y * 1.25; nextPick = t + 9; }
+  tSpeed = 0.55 + Math.random() * 1.0;                   // dawdle ↔ cruise
+  nextPick = t + 5 + Math.random() * 7;
+}
+function wander(dt, t) {
+  ZOOM += (zoomTo - ZOOM) * (1 - Math.exp(-dt * 8)); outer.scale.setScalar(ZOOM); updateGhost(t);
+  const M = Math.pow(ZOOM, 1.5);                        // mass grows with size: slower beats, more inertia, longer glides
+  const reached = wallTgt ? (atWall && t - wallSince > 0.8) : P.distanceTo(TGT) < 0.9 * ZOOM;   // a wall target = touch the wall and brush it ~1s
+  if (reached || t > nextPick) pickTarget(t);
+  DES.copy(TGT).sub(P).normalize();
+  // walls: look ahead; near a wall, cancel the outward part of the aim and push gently inward
+  // → the fish curves along the wall and brushes it instead of reversing in open water
+  const w = walls(P.z), LA = 0.25 + speed * 0.25; let out = false;   // short look-ahead: swim right up to the wall
+  for (const a of ["x", "y", "z"]) {
+    const ahead = P[a] + V[a] * LA;
+    const sg = a === "z" ? (ahead > (TANK_NEAR + TANK_FAR) / 2 ? 1 : -1) : (Math.sign(ahead) || 1);
+    const over = a === "z" ? (sg > 0 ? ahead - TANK_NEAR : TANK_FAR - ahead) : Math.abs(ahead) - w[a];
+    if (over > 0 && !(wallTgt && a !== "z" && Math.sign(TGT[a]) === sg && Math.abs(TGT[a]) > w[a])) {   // (a wall target: let it drive in and ram)
+      out = true;
+      if (DES[a] * sg > 0) DES[a] = -DES[a] * 0.25;
+      DES[a] -= sg * clamp(over / LA, 0, 1) * 0.35;
+    }
+  }
+  DES.normalize();
+  const yLim = wallTgt && Math.abs(TGT.y) > Math.abs(TGT.x) * 0.5 ? 0.5 : 0.3;   // allow a steeper climb/dive when heading for the top/bottom wall
+  DES.y = clamp(DES.y, -yLim, yLim); DES.z = clamp(DES.z, -0.5, 0.5); DES.normalize();
+  DES.y -= pressY * 0.6; DES.normalize();                // pressed on the top/bottom glass: tip away from it   // aim mostly level + side-on
+
+  // ---- intent → body → heading (mass + water) ------------------------------------------------
+  // The fish decides first: the yaw it WANTS (angle to the aim, in its own body frame) bends the body
+  // and starts a stroke right away. That bend is the torque; the heading only follows through angular
+  // inertia damped by the water — so fins/tail visibly lead the turn, and the turn carries through.
+  PRV.copy(V);
+  LAT.crossVectors(UPV, V).normalize();                   // body's lateral axis (= outer local +X)
+  const want = Math.atan2(DES.dot(LAT), DES.dot(V));      // signed yaw still wanted (−π..π)
+  const intent = clamp(want / 1.1, -1, 1);
+  // gait: a wanted turn starts a stroke early (prep stroke); every glide lasts ≥0.4s
+  if (gait === "coast" && (t > gaitEnd || ((Math.abs(intent) > 0.55 || Math.abs(V.z) > 0.7) && t > coastStart + 0.4))) {
+    gait = "burst"; omega = 2 * Math.PI * clamp(1.3 + 1.1 * tSpeed + 0.9 * Math.abs(intent), 1.5, 3.5) / Math.sqrt(ZOOM);   // 1.5–3.5 beats/s, slower for a bigger fish
+    gaitEnd = t + (2 + Math.floor(Math.random() * 3)) * (2 * Math.PI / omega);
+  } else if (gait === "burst" && t > gaitEnd) {
+    gait = "coast"; coastStart = t; gaitEnd = t + 0.6 + Math.random() * (tSpeed < 0.9 ? 1.4 : 0.8);
+  }
+  beat += ((gait === "burst" ? 1 : 0.06) - beat) * (1 - Math.exp(-dt * (gait === "burst" ? 8 : 3.5)));
+  // body bend: LEADS with intent, then also holds while the body is still rotating
+  // wall pressure joins in: the body curves AWAY from the glass (nose + tail away, mid-body riding along
+  // it), up to ~1.8× the normal bend — flexing round the wall instead of being shoved off it rigidly
+  // ramming the glass: a wall doesn't give like water, so momentum INTO it folds the body further
+  // (up to ~2.6× a normal turn) until the fish lies parallel and the into-wall speed is gone
+  steer += (clamp(0.7 * intent + 0.3 * yawRate / 1.6 - 1.1 * pressLat - impact * (Math.sign(pressLat) || 1), -2.6, 2.6) - steer) * (1 - Math.exp(-dt * 11));
+  // torque from the bent body (stronger while stroking; big reversals get a hard C-stroke) vs water damping
+  const kick = 1 + 0.6 * clamp((Math.abs(want) - 1.4) / 1.2, 0, 1);
+  yawRate += (7.0 * steer * (0.35 + 0.65 * beat) * kick * (out ? 1.4 : 1) - 3.4 * yawRate) * dt / M;   // angular inertia ∝ mass
+  V.applyAxisAngle(UPV, yawRate * dt);                    // +yaw turns toward LAT (+X side)
+  V.y += (DES.y - V.y) * (1 - Math.exp(-dt * 1.2)); V.y = clamp(V.y, -0.5, 0.5); V.normalize();   // pitch: slow, no bend
+  turn += (yawRate - turn) * (1 - Math.exp(-dt * 3));
+
+  // ---- momentum: velocity is NOT the heading ------------------------------------------------------
+  // forward = thrust (beating) vs drag; sideways slip decays (fins/body resist it) → the fish carries
+  // its old line a little through a turn instead of pivoting on a rail
+  const vf = VEL.dot(V);
+  const ts = tSpeed * Math.sqrt(ZOOM);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
+  let nf = vf + (DRAG * ts * ts * beat - DRAG * vf * Math.abs(vf)) * dt * 1.6 / Math.sqrt(M);   // heavier → slower to speed up and to slow down (longer glides)
+  nf = Math.max(nf, 0.12);
+  LATV.copy(VEL).addScaledVector(V, -vf).multiplyScalar(Math.exp(-dt * 7));
+  VEL.copy(V).multiplyScalar(nf).add(LATV);
+  speed = nf;
+  P.addScaledVector(VEL, dt);
+  // collision: the wall is solid — stop at it and kill the into-wall motion (brush along it)
+  const wc = walls(P.z); const wasAtWall = atWall; atWall = false;
+  ram *= Math.exp(-dt * 3);
+  for (const a of ["x", "y"]) {
+    if (Math.abs(P[a]) > wc[a] * 0.97) atWall = true;
+    if (Math.abs(P[a]) > wc[a] * 0.9 && a === "x") ram = Math.max(ram, VEL.x * Math.sign(P.x));   // approach speed into the side glass, pre-stop
+    if (Math.abs(P[a]) > wc[a]) { const sg = Math.sign(P[a]); POP.centre = Math.max(POP.centre, Math.abs(P[a]) - wc[a]); P[a] = sg * wc[a]; if (VEL[a] * sg > 0) VEL[a] = 0; }
+  }
+  if (P.z > TANK_NEAR) { P.z = TANK_NEAR; if (VEL.z > 0) VEL.z = 0; } else if (P.z < TANK_FAR) { P.z = TANK_FAR; if (VEL.z < 0) VEL.z = 0; }
+  if (atWall && !wasAtWall) wallSince = t;
+  outer.position.copy(P);
+  tmp.copy(P).add(V); outer.up.set(0, 1, 0); outer.lookAt(tmp);
+  outer.rotateZ(clamp(turn * 0.2, -0.3, 0.3));           // roll into the turn
+  phase += dt * omega * (0.3 + 0.7 * beat);              // beat while stroking, slow residual while gliding
+  outer.rotateY(-Math.sin(phase) * 0.045 * beat);        // head recoil: the head yaws opposite the tail stroke
+}
+// ---- whole-body wall contact (display) ----------------------------------------------------------
+// The tank walls are the screen edges (per depth). Every bone is tested — leaf bones extended by one
+// segment to reach the fin/tail TIPS. Head/trunk past a wall → the whole fish is pushed back and its
+// into-wall motion stops (it can't pass). Tail/fins swung into a wall → that stroke is stopped and
+// bounced back a little (the tail flattens and brushes along the glass) and the body is nudged off.
+const _bp = new THREE.Vector3(), _pp = new THREE.Vector3();
+let wallHits = 0, tailHits = 0; const POP = { rigid: 0, fin: 0, tailFallback: 0, tailReact: 0, flatten: 0, centre: 0, finClamp: 0 };   // debug: biggest jump per source since last read
+function edgeAt(z) { const hh = (CAM0 - z) * Math.tan(cam.fov * D2R / 2); return { x: hh * cam.aspect, y: hh }; }
+function rotBone(bn, a) { if (AX === "x") bn.rotateX(a); else if (AX === "y") bn.rotateY(a); else bn.rotateZ(a); }
+function tipOf(bn, out) {
+  bn.getWorldPosition(out);
+  const leaf = !bn.children.some(c => c.isBone);
+  if (leaf && bn.parent && bn.parent.isBone) { bn.parent.getWorldPosition(_pp); out.multiplyScalar(2).sub(_pp); }   // extrapolate one segment → fin tip
+  return out;
+}
+function wallCollide(cdt) {
+  outer.updateMatrixWorld(true);
+  // three kinds of contact: RIGID head/trunk joints (can't pass → full push-back), soft front-fin tips
+  // (pectoral/pelvic/dorsal tips press on the glass → gentle push), tail/rear fins (flatten, below)
+  let penX = 0, sideX = 0, penY = 0, sideY = 0, tailSide = 0, finX = 0, finSX = 0, finY = 0, finSY = 0;
+  // pressure: how close any part of the body is to a wall, starting a little BEFORE contact (feel the
+  // glass coming) — drives the away-bend in wander() so the body flexes round the wall
+  const feel = 0.45 * ZOOM; let prX = 0, prSX = 0, prY = 0, prSY = 0;
+  for (const bn of bones) {
+    tipOf(bn, _bp); const e = edgeAt(_bp.z), tw = bn.userData.tw || 0, leaf = !bn.children.some(c => c.isBone);
+    const ox = Math.abs(_bp.x) - e.x, oy = Math.abs(_bp.y) - e.y;
+    if (ox + feel > prX) { prX = ox + feel; prSX = Math.sign(_bp.x); }
+    if (oy + feel > prY) { prY = oy + feel; prSY = Math.sign(_bp.y); }
+    if (tw > 0.35) { if (ox > 0) tailSide = Math.sign(_bp.x); if (oy > finY) { finY = oy; finSY = Math.sign(_bp.y); } continue; }
+    if (leaf) { if (ox > finX) { finX = ox; finSX = Math.sign(_bp.x); } if (oy > finY) { finY = oy; finSY = Math.sign(_bp.y); } continue; }
+    if (ox > penX) { penX = ox; sideX = Math.sign(_bp.x); }
+    if (oy > penY) { penY = oy; sideY = Math.sign(_bp.y); }
+  }
+  const pLat = clamp(prX / feel, 0, 1.6) * (Math.sign(LAT.x * prSX) || 1);          // + = wall on the body's +LAT side
+  pressLat += (pLat - pressLat) * (Math.abs(pLat) > Math.abs(pressLat) ? 0.35 : 0.08);  // fast to feel, slow to let go
+  // impact: how hard the fish is driving into the side wall it's touching (approach speed ⟂ the glass)
+  const vIn = Math.max(0, ram, VEL.x * prSX) / (0.5 * Math.sqrt(ZOOM)), touch = clamp(prX / feel - 0.5, 0, 1);
+  const imp = clamp(vIn, 0, 1.2) * touch;
+  impact += (imp - impact) * (imp > impact ? 0.5 : 0.06);      // hits fast, unfolds slowly as it turns parallel
+  const pY = clamp(prY / feel, 0, 1.6) * prSY;
+  pressY += (pY - pressY) * (Math.abs(pY) > Math.abs(pressY) ? 0.35 : 0.08);
+  if (penX > 0) { POP.rigid = Math.max(POP.rigid, penX); P.x -= sideX * penX; if (VEL.x * sideX > 0) VEL.x = 0; wallHits++; }
+  if (penY > 0) { POP.rigid = Math.max(POP.rigid, penY); P.y -= sideY * penY; if (VEL.y * sideY > 0) VEL.y = 0; wallHits++; }
+  if (finX > 0) { POP.fin = Math.max(POP.fin, finX * 0.35); P.x -= finSX * finX * 0.35; if (VEL.x * finSX > 0) VEL.x *= 0.6; }   // fins pressed on the glass ease the fish off
+  if (finY > 0) { P.y -= finSY * finY * 0.35; if (VEL.y * finSY > 0) VEL.y *= 0.6; }
+  if (tailSide) {
+    // tail against the glass. NO snaps, NO teleports (both read as dropped frames): the swing driving the
+    // tail into the wall is damped and eased back over a few frames, and if the tail still presses on the
+    // glass (it swings INTO the wall while the fish turns away) the tail PUSHES the body off — gradually,
+    // at most ~1.2 body-lengths/s, like a push-off, instead of relocating the fish in one frame
+    const wallLat = Math.sign(LAT.x * tailSide) || 1;          // which body side faces that wall
+    tailHits++;
+    for (const bn of bones) {
+      const u = bn.userData; if ((u.tw || 0) <= 0.35) continue;
+      if ((u.a || 0) * BEND_SIGN * wallLat > 0) {
+        const na = u.a * 0.7; POP.flatten = Math.max(POP.flatten, Math.abs(na - u.a)); rotBone(bn, na - u.a); u.a = na;
+        if ((u.av || 0) * BEND_SIGN * wallLat > 0) u.av *= 0.2;   // stop the swing into the glass (no bounce-snap)
+      }
+    }
+    outer.updateMatrixWorld(true);
+    let rem = 0;
+    for (const bn of bones) { if ((bn.userData.tw || 0) <= 0.35) continue; tipOf(bn, _bp); rem = Math.max(rem, Math.abs(_bp.x) - edgeAt(_bp.z).x); }
+    if (rem > 0) {
+      const step = Math.min(rem, 1.2 * BODY_L * ZOOM * cdt);
+      POP.tailFallback = Math.max(POP.tailFallback, step);
+      P.x -= tailSide * step; if (VEL.x * tailSide > 0) VEL.x *= 0.5;
+    }
+  }
+  if (penX > 0 || penY > 0 || finX > 0 || finY > 0 || tailSide) outer.position.copy(P);
+}
+
+// ---- fins: passive rays bending in water (display) -------------------------------------------------
+// Fin rays are segmented flexible beams — stiff at the base, softer toward the tip — and most of a
+// fin's flowing look is PASSIVE: water pushing on the ray as it moves. Per ray-bone: tip velocity
+// through still water → drag (linear viscous + quadratic pressure) perpendicular to the ray → torque
+// on its joint → damped torsional spring (softer toward the tip, under-damped so it overshoots and
+// ripples). Dorsal/anal fins also carry a small travelling wave lagging the body wave.
+const FINS = []; let BODY_L = 1;
+const _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _qf = new THREE.Quaternion(), _qw = new THREE.Quaternion();
+function setupFins() {
+  let tip = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
+  const spine = new Set(); for (let b = tip.parent; b && b.isBone; b = b.parent) if ((b.userData.tw || 0) < 0.66) spine.add(b);
+  outer.updateMatrixWorld(true);
+  let head = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
+  BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
+  const depth = b => { let d = 0; for (let p = b.parent; p && p.isBone && !spine.has(p); p = p.parent) d++; return d; };
+  for (const bn of bones) {
+    if (spine.has(bn) || !bn.parent || !bn.parent.isBone || (bn.userData.tw || 0) < 0.1) continue;   // (jaw/gill bones at the head: not fins)
+    const d = depth(bn), leaf = !bn.children.some(c => c.isBone), tw = bn.userData.tw || 0;
+    const k = (leaf ? 20 : 42) / (1 + 0.35 * d);              // stiff near the base, soft at the tips
+    const dorsalAnal = tw > 0.35 && tw < 0.7;
+    FINS.push({ bn, k, c: 2 * Math.sqrt(k) * 0.24, th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5 });
+  }
+}
+function finStep(dt) {
+  if (!FINS.length || dt <= 0) return;
+  outer.updateMatrixWorld(true);
+  const Lw = BODY_L * ZOOM;
+  for (const f of FINS) {
+    const bn = f.bn; tipOf(bn, _ta);
+    if (!f.prev) { f.prev = _ta.clone(); continue; }
+    _u.copy(f.prev).sub(_ta).divideScalar(dt * Lw);         // water velocity relative to the ray tip, in body-lengths/s
+    f.prev.copy(_ta);
+    bn.getWorldPosition(_tb); const seg = _ta.clone().sub(_tb); const sl = seg.length() || 1e-6; seg.divideScalar(sl);
+    _u.addScaledVector(seg, -_u.dot(seg));                  // only flow ACROSS the ray loads it
+    const un = _u.length(), drag = un + 0.6 * un * un;     // viscous + pressure drag
+    _ax.crossVectors(seg, _u); if (_ax.lengthSq() > 1e-12) _ax.normalize();
+    bn.getWorldQuaternion(_qw).invert(); _ax.applyQuaternion(_qw);    // world torque axis → bone-local
+    const T = 0.55 * f.k * Math.min(drag, 3);              // torque (normalised: ~1 BL/s cross-flow ≈ 0.5 rad of sweep)
+    for (let n = Math.ceil(dt / 0.006), h = dt / n; n > 0; n--) {
+      const t2 = f.th.lengthSq(), ks = f.k * (1 + t2 / 0.36);   // progressive stiffening: a ray gets stiffer the more it's bent (soft limit, no kink)
+      f.om.x += (T * _ax.x - ks * f.th.x - f.c * f.om.x) * h; f.om.y += (T * _ax.y - ks * f.th.y - f.c * f.om.y) * h; f.om.z += (T * _ax.z - ks * f.th.z - f.c * f.om.z) * h;
+      f.th.addScaledVector(f.om, h);
+    }
+    const a = f.th.length(); if (a > 1.1) { POP.finClamp = Math.max(POP.finClamp, a - 1.1); f.th.multiplyScalar(1.1 / a); f.om.multiplyScalar(0.5); }   // safety only
+    if (a > 1e-5) { _qf.setFromAxisAngle(_tb.copy(f.th).normalize(), Math.min(a, 1.1)); bn.quaternion.multiply(_qf); }
+    if (f.ripple) rotBone(bn, Math.sin(phase - f.lag) * f.ripple * (0.4 + 0.6 * beat));   // travelling ripple, lagging the body wave
+  }
+}
+
+// debug probe (?debug=1): where the head points vs where the fish moves — 3D and on screen
+if (Q.get("debug") === "1") window.__bones = () => bones.map(b => [b.name.replace('_Armature',''), +(b.userData.tw || 0).toFixed(2), b.children.some(c => c.isBone) ? '' : 'leaf']);
+if (Q.get("debug") === "1") window.__fins = () => FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), +f.th.length().toFixed(2)]).sort((a,b)=>b[2]-a[2]).slice(0,6);
+if (Q.get("debug") === "1") window.__pop = () => { const o = { ...POP, frameMs: +(lastDt * 1000).toFixed(1), body: +(BODY_L * ZOOM).toFixed(2) }; for (const k in POP) POP[k] = 0; return o; };
+if (Q.get("debug") === "1") window.__dbg = () => {
+  if (bones.length < 3) return null;
+  let hb = bones[0], tb = bones[0];
+  for (const bn of bones) { if ((bn.userData.tw ?? 0) < (hb.userData.tw ?? 0)) hb = bn; if ((bn.userData.tw ?? 0) > (tb.userData.tw ?? 0)) tb = bn; }
+  outer.updateMatrixWorld(true);
+  const h = hb.getWorldPosition(new THREE.Vector3()), tl = tb.getWorldPosition(new THREE.Vector3());
+  const head = h.clone().sub(tl).normalize();
+  const sp = v => { const a = v.clone().project(cam); return [a.x * innerWidth / 2, a.y * innerHeight / 2]; };
+  const ph = sp(h), pt = sp(tl), p0 = sp(P), p1 = sp(P.clone().addScaledVector(V, 0.5));
+  const ang2 = (a, b) => { const d = Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0]); return Math.abs(((d + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * 180 / Math.PI; };
+  return { deg3d: head.angleTo(V) * 180 / Math.PI,
+           degScreen: ang2([ph[0] - pt[0], ph[1] - pt[1]], [p1[0] - p0[0], p1[1] - p0[1]]),
+           V: V.toArray().map(x => +x.toFixed(2)), head: head.toArray().map(x => +x.toFixed(2)),
+           scr: [innerWidth / 2 + p0[0], innerHeight / 2 - p0[1]], scrHead: [innerWidth / 2 + ph[0], innerHeight / 2 - ph[1]],
+           ...(() => { outer.updateMatrixWorld(true); let tp = 0, bp = 0, fp = 0; for (const bn of bones) { tipOf(bn, _bp); const e = edgeAt(_bp.z); const o = Math.max(Math.abs(_bp.x) - e.x, Math.abs(_bp.y) - e.y); const leaf = !bn.children.some(c => c.isBone); if ((bn.userData.tw || 0) > 0.35) tp = Math.max(tp, o); else if (!leaf) bp = Math.max(bp, o); else fp = Math.max(fp, o); } return { tailPen: +tp.toFixed(3), bodyPen: +bp.toFixed(3), finPen: +fp.toFixed(3) }; })(),
+           finMean: FINS.length ? +(FINS.reduce((s, f) => s + f.th.length(), 0) / FINS.length).toFixed(3) : 0, finMax: FINS.length ? +Math.max(...FINS.map(f => f.th.length())).toFixed(3) : 0, nFins: FINS.length,
+           pressLat: +pressLat.toFixed(2), impact: +impact.toFixed(2), wallHits, tailHits, yawRate: +yawRate.toFixed(3), slip: +(VEL.angleTo(V) * 180 / Math.PI).toFixed(1), atWall,
+           gait, P: P.toArray().map(x => +x.toFixed(2)), W: (({x, y}) => [+x.toFixed(2), +y.toFixed(2)])(walls(P.z)), camZ: +cam.position.z.toFixed(2), zoom: +ZOOM.toFixed(2), ghost: +ghostMat.opacity.toFixed(2), vz: +V.z.toFixed(2), beat: +beat.toFixed(2), steer: +steer.toFixed(2), speed: +speed.toFixed(2), bendSign: BEND_SIGN,
+           tailLat: +tl.clone().sub(P).dot(LAT.clone().crossVectors(UPV, V).normalize()).toFixed(3) };
+};
+
+// fullscreen + idle cursor (display mode). Fullscreen needs a user gesture, so: click / F / dblclick.
+const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+function toggleFull() {
+  if (isFull()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  else { const el = document.documentElement; const r = (el.requestFullscreen || el.webkitRequestFullscreen).call(el); if (r && r.catch) r.catch(() => {}); }
+}
+if (DISPLAY) {
+  cv.addEventListener("click", () => { if (!isFull()) toggleFull(); });
+  addEventListener("keydown", e => { if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFull(); });
+  // scroll wheel = zoom = fish size (0.5×–3.5×); the camera and the tank never move
+  addEventListener("wheel", e => { e.preventDefault(); zoomTo = clamp(zoomTo * Math.exp(-e.deltaY * 0.0012), 0.5, 3.5); zoomT = performance.now() / 1000; }, { passive: false });
+  scene.add(ghost);
+  const toSettings = () => {
+    const u = new URLSearchParams({ display: "0", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, amp: AMP, ax: AX, clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
+    if (isFull()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    location.href = location.pathname + "?" + u;
+  };
+  document.getElementById("back").addEventListener("click", e => { e.stopPropagation(); toSettings(); });
+  addEventListener("keydown", e => { if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) toSettings(); });
+  const hint = document.getElementById("hint"); setTimeout(() => { hint.style.opacity = 0; }, 4000);
+  let idleT = 0; const wake = () => { document.body.classList.remove("idle"); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add("idle"), 3000); };
+  addEventListener("pointermove", wake); wake();
+  pickTarget(0);
+}
+function loop() {
+  const now = performance.now(); let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05); lastDt = Math.max(lastDt * 0.9, dt); const t = now / 1000;
+  corr.rotation.set(CORR.x * D2R, CORR.y * D2R, CORR.z * D2R);
+  if (DISPLAY) wander(dt, t);
+  else if (SWIM) {                                         // move in a slow horizontal circle + face motion (like the school)
+    const r = 2.2, x = Math.cos(t * 0.5) * r, z = Math.sin(t * 0.5) * r;
+    outer.position.set(x, 0, z);
+    const vx = -Math.sin(t * 0.5), vz = Math.cos(t * 0.5);
+    tmp.set(x + vx, 0, z + vz); outer.up.set(0, 1, 0); outer.lookAt(tmp);
+    ARROW.position.copy(outer.position); ARROW.setDirection(new THREE.Vector3(vx, 0, vz).normalize()); ARROW.visible = true;
+  } else { outer.position.set(0, 0, 0); outer.quaternion.identity(); ARROW.visible = false; }
+  for (const bn of bones) if (bn.userData.q0) bn.quaternion.copy(bn.userData.q0);  // rest FIRST each frame → symmetric wave, no accumulation (matches the school)
+  if (CLIP && mixer) mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * beat + 0.9 * Math.abs(steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
+  if (DISPLAY && PROC && bones.length > 2) {
+    const amp = AMP * (0.08 + 0.92 * beat), bendC = clamp(steer * 1.2, -2.6, 2.6) * 0.10 * BEND_SIGN;   // more flex: the body really curls into a turn
+    for (const bn of bones) {
+      const tw = bn.userData.tw || 0, u = bn.userData;
+      const env = 0.12 + 0.88 * tw * tw;                                         // small head yaw, big tail sweep
+      const curv = tw < 0.15 ? 0 : tw < 0.72 ? 1.9 * Math.pow((tw - 0.15) / 0.57, 1.3) : 1.9 - 11.5 * (tw - 0.72);   // rigid head/gills → progressively rubbery toward the tail base, then the tail counter-flick
+      const target = Math.sin(phase - tw * 5.65) * amp * env + bendC * curv;     // k = 0.9·2π → λ ≈ 1.1 body
+      // spring: stiff head … looser tail (natural freq stays ABOVE the beat so the stroke isn't filtered out),
+      // under-damped → the tail/fins lag and overshoot on stroke starts, glides and bend changes
+      const k = (1900 - 1550 * Math.min(tw, 0.75)) / ZOOM, c = 2 * Math.sqrt(k) * 0.4;   // stiff head … rubbery rear; bigger body flexes slower
+      for (let h = dt, n = Math.ceil(dt / 0.004), sdt = dt / n; n > 0; n--) {     // sub-steps: stable on slow frames
+        u.av = (u.av || 0) + (k * (target - (u.a || 0)) - c * (u.av || 0)) * sdt; u.a = (u.a || 0) + u.av * sdt;
+      }
+      if (AX === "x") bn.rotateX(u.a); else if (AX === "y") bn.rotateY(u.a); else bn.rotateZ(u.a);
+    }
+  } else if (PROC && bones.length > 2) {
+    const ph = DISPLAY ? phase : t * 4.5, bank = DISPLAY ? clamp(turn * 4, -1, 1) * 0.05 : 0;   // bank: bend into the turn (as the school)
+    for (let i = 0; i < bones.length; i++) { const tw = bones[i].userData.tw || 0, a = (Math.sin(ph - tw * 5) * AMP + bank) * tw * tw; if (AX === "x") bones[i].rotateX(a); else if (AX === "y") bones[i].rotateY(a); else bones[i].rotateZ(a); }
+  }
+  if (DISPLAY && bones.length > 2) { finStep(dt); wallCollide(dt); }
+  if (!DISPLAY) controls.update();
+  renderer.render(scene, cam);
+  info.textContent = `${MODEL}  ·  rot X:${CORR.x}° Y:${CORR.y}° Z:${CORR.z}°  ·  bend ${AX} amp ${AMP}  ·  swim ${SWIM ? "on (red arrow = direction)" : "off"}`;
+  requestAnimationFrame(loop);
+}
+</script>
+<script>
+fetch("version.txt", { cache: "no-store" }).then(r => r.ok ? r.text() : "").then(t => { document.getElementById("ver").textContent = t.trim().replace(/\s+/g, " "); }).catch(() => {});
+</script>
+</body>
+</html>
