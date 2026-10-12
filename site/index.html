@@ -27,12 +27,11 @@
   #about h3 { margin: 0 0 4px; font-size: 12px; color: #9fe9ff; }
   #about a { color: #bfeaff; text-decoration: underline; }
   #ver { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
-  body.display #info { display: none; }
 </style>
 <script type="importmap">
 { "imports": {
-  "three": "./vendor/three/build/three.module.js",
-  "three/addons/": "./vendor/three/examples/jsm/"
+  "three": "/vendor/three/build/three.module.js",
+  "three/addons/": "/vendor/three/examples/jsm/"
 }}
 </script>
 </head>
@@ -45,36 +44,88 @@
   Y<button data-rot="y" data-d="-1">−</button><button data-rot="y" data-d="1">+</button>
   Z<button data-rot="z" data-d="-1">−</button><button data-rot="z" data-d="1">+</button>
   <button id="step">step 90°</button><button id="rreset">reset</button>
-  &nbsp;<b>bend</b><button data-ax="x">X</button><button data-ax="y">Y</button><button data-ax="z" class="on">Z</button>
-  <button id="dn">−</button><span id="ampv">0.02</span><button id="up">+</button>
+  &nbsp;<b>bend</b>
+  X<button data-bd="x" data-d="-1">−</button><span id="ampv-x">0</span><button data-bd="x" data-d="1">+</button>
+  Y<button data-bd="y" data-d="-1">−</button><span id="ampv-y">0</span><button data-bd="y" data-d="1">+</button>
+  Z<button data-bd="z" data-d="-1">−</button><span id="ampv-z">0.02</span><button data-bd="z" data-d="1">+</button>
   &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
   &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
   <div id="about"><h3>About / Credits</h3>
     <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
-    <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
+    <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
     <div>Display mode: click or F for fullscreen, scroll to zoom, S for settings.</div>
     <div>Version: <span id="ver"></span></div>
     <div><a href="/goldfish">Goldfish</a></div>
   </div>
 </div>
 <button id="back" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
-<div id="info">drag to orbit · tune the orientation and bend, then press ▶ display</div>
+<div id="info">drag to orbit · tune the bend, then press ▶ display</div>
 <script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-let AX = "z", AMP = 0.02, CLIP = true, PROC = true, SWIM = false;
+let AX = "z", AMP = 0.02, AMPS = { x: 0, y: 0, z: 0.02 }, CLIP = true, PROC = true, SWIM = false;
 const CORR = { x: 0, y: 0, z: 0 };                       // nose-correction euler (90° steps)
 const Q = new URLSearchParams(location.search);
-// baked-in defaults for the bare URL; any query param overrides them
-for (const [k, v] of Object.entries({ display: "1", m: "guppies.glb", rx: "20", ry: "0", rz: "0", amp: "0.1", ax: "z", clip: "1", proc: "1" })) if (!Q.has(k)) Q.set(k, v);
+if (!Q.has("display")) Q.set("display", "1");   // baked-in default: the landing view is display mode
 const DISPLAY = Q.get("display") === "1";                // display mode: black, fish only, natural wander path
 // per-model presets = the values the school uses (index.html G1/G2); URL params override
 // guppies.glb: the Owner's tuned load defaults (2026-10-04: rot X 20°, bend z, amp 0.1 — swims nose-first)
+// goldfish.glb (2026-10-11): nose +Z, up +Y in the file (verified) → rot 0; no skeleton in the file, so `rig` builds one at load (rigGoldfish).
+//   ax y = lateral bend about the up axis; rate/glide/speed = slower stroke, longer glides, slower cruise; fk/fz = fin+tail spring stiffness / damping ratio (softer + longer-lagging than the betta);
+//   bend = C-bend scale (stiffer body); fg/fmax = drag torque gain / max bend per joint (rad); rip = active tail ripple scale. URL overrides: ?amp= ?fk= ?fz= ?rip= ?rate= ?glide=
+const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, matte: true, anat: "betta", dph: 60 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
+  "/goldfish.glb": { rx: 0, bx: 0.1, by: 0.4, bz: 0.0125, rig: "goldfish", rate: 0.55, glide: 2.0, speed: 0.7, fk: 0.3, fz: 0.3, rip: 1.4, fg: 0.38, fmax: 0.42, bend: 0.45, cum: 0.85, vk: 0.5, vdk: 0.5, vfl: 0.05, vspr: 1.1 } };
+const MKEY = "/guppies.glb";   // the one model on this page (the betta)
+const PRE = PRESETS["/guppies.glb"];
+const GOLD = PRE.rig === "goldfish";
+const TUNE = k => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : 1));      // per-model motion tunables (default 1 = unchanged)
+const BENDK = TUNE("bend"), RATE = TUNE("rate"), GLIDE = TUNE("glide"), SPEEDK = TUNE("speed"), FK = TUNE("fk"), FZ = Q.has("fz") ? +Q.get("fz") : (PRE.fz || 0.24), RIP = Q.has("rip") ? +Q.get("rip") : (PRE.rip || 0);
+const TL = Q.has("tl") ? Math.max(0, Math.min(1, +Q.get("tl") || 0)) : 1, TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.55, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
+// fins/tail: alpha falls from 1 (fin<0.35) to TLMIN at the free margin, fin rays (darker/denser texture stripes, = texture luminance below its own blurred value) keep +0.25; plus a warm back-light (light behind the sheet / fish looking toward the light) scaled by _fin.
+// Order-independent on ONE double-sided mesh: alpha-to-coverage (MSAA, per-sample depth) or alpha hash (stochastic discard) - no blending, no sorting; body has fin=0 -> alpha 1 -> fully opaque.
+function patchFin(m) {
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uTL = { value: TL }; sh.uniforms.uTLMin = { value: TLMIN }; sh.uniforms.uTLGlow = { value: TLGLOW };
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float _fin;\nvarying float vFin;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvFin = _fin;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vFin;\nuniform float uTL, uTLMin, uTLGlow;\nfloat tlA = 1.0;")
+      .replace("#include <alphamap_fragment>", `#include <alphamap_fragment>
+      { float s = smoothstep(0.35, 1.0, vFin) * uTL;
+        float ray = 0.0;
+        #ifdef USE_MAP
+          float l0 = dot(texture2D(map, vMapUv).rgb, vec3(0.3, 0.59, 0.11)), l1 = dot(textureLod(map, vMapUv, 3.0).rgb, vec3(0.3, 0.59, 0.11));
+          ray = clamp((l1 - l0) / max(l1, 0.02) * 3.0, 0.0, 1.0);
+        #endif
+        tlA = mix(1.0, clamp(uTLMin + 0.25 * ray, 0.0, 1.0), s); diffuseColor.a *= tlA; }`)
+      .replace("#include <opaque_fragment>", `{ float s = smoothstep(0.2, 1.0, vFin) * uTL;
+        vec3 Ld = vec3(0.0, 1.0, 0.0);
+        #if NUM_DIR_LIGHTS > 0
+          Ld = directionalLights[0].direction;
+        #endif
+        vec3 nV = normalize(nonPerturbedNormal), vV = normalize(vViewPosition);
+        float back = clamp(-dot(nV, Ld) * 0.7 + 0.3, 0.0, 1.0) * (0.5 + 0.5 * pow(clamp(-dot(vV, Ld), 0.0, 1.0), 2.0));
+        outgoingLight += diffuseColor.rgb * vec3(1.0, 0.55, 0.2) * back * s * uTLGlow * 2.0 * (1.0 - 0.5 * tlA); }
+      #include <opaque_fragment>
+      ${TLMODE === "a2c" ? "gl_FragColor.a = tlA < 1.0 ? clamp(tlA + (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) * 0.3, 0.0, 1.0) : 1.0;" : ""}`);
+  };
+  m.customProgramCacheKey = () => "fin-" + TLMODE;
+  if (TLMODE === "hash") m.alphaHash = true; else m.alphaToCoverage = true;
+  m.alphaTest = 0;
+}
+if (PRE.rx != null) CORR.x = PRE.rx;                    // load defaults apply to tuning AND display
+// per-axis bend amplitudes bx/by/bz (all applied at once). Legacy ?ax=&amp= (old links) = that one axis only.
+const syncAx = () => { AX = "z"; let m = -1; for (const a of ["x", "y", "z"]) if (AMPS[a] > m) { m = AMPS[a]; AX = a; } AMP = AMPS[AX]; };   // AX/AMP = the dominant axis (calibration, fin ripple, wall flatten)
+if (PRE.amp != null) { AMPS = { x: 0, y: 0, z: 0 }; AMPS[PRE.ax || "z"] = PRE.amp; }
+for (const a of ["x", "y", "z"]) if (PRE["b" + a] != null) AMPS[a] = PRE["b" + a];
 for (const a of ["x", "y", "z"]) if (Q.has("r" + a)) CORR[a] = +Q.get("r" + a);
-if (Q.has("amp")) AMP = +Q.get("amp");
-if (Q.has("ax")) AX = Q.get("ax");
+if (["bx", "by", "bz"].some(k => Q.has(k))) { for (const a of ["x", "y", "z"]) if (Q.has("b" + a)) AMPS[a] = +Q.get("b" + a) || 0; }
+else if (Q.has("amp") || Q.has("ax")) {
+  const ax0 = Q.has("ax") ? Q.get("ax") : (PRE.ax || "z"), am0 = Q.has("amp") ? +Q.get("amp") : (PRE.amp != null ? PRE.amp : AMPS[ax0]);
+  AMPS = { x: 0, y: 0, z: 0 }; if (ax0 in AMPS) AMPS[ax0] = am0;
+}
+syncAx();
+const bendQS = () => ({ bx: AMPS.x, by: AMPS.y, bz: AMPS.z });
 if (Q.has("clip")) CLIP = Q.get("clip") === "1";
 if (Q.has("proc")) PROC = Q.get("proc") === "1";
 if (DISPLAY) document.body.classList.add("display");
@@ -95,17 +146,22 @@ const ARROW = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector
 const outer = new THREE.Group(), corr = new THREE.Group();   // outer = lookAt; corr = nose correction
 outer.add(corr); scene.add(outer);
 let mixer = null, bones = [], action = null;
-const MODEL = "guppies.glb";   // the only model shipped with this site
+const MODEL = MKEY;
 new GLTFLoader().load(MODEL, g => {
-  const root = g.scene;
+  const root = g.scene; if (Q.get("debug") === "1") window.__root = root;
+  let hasSkin = false; root.traverse(n => { if (n.isSkinnedMesh) hasSkin = true; });
+  if (GOLD && !hasSkin) rigGoldfish(root);
+  else if (PRE.anat === "betta" && hasSkin && !Q.has("noanat")) rigBetta(root);                  // skin-less model: build the procedural skeleton + skin weights first
   const box = new THREE.Box3().setFromObject(root), sz = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
   const scl = (DISPLAY ? 1.7 : 3.2) / Math.max(sz.x, sz.y, sz.z);   // smaller in display mode: room to roam
   const pivot = new THREE.Group(); pivot.add(root); root.position.set(-c.x, -c.y, -c.z);
   pivot.scale.setScalar(scl); corr.add(pivot);
   root.traverse(n => {
-    if (n.isBone) { bones.push(n); n.userData.q0 = n.quaternion.clone(); }
+    if (n.isBone) { if (!n.userData.anat) bones.push(n); if (!n.userData.q0) n.userData.q0 = n.quaternion.clone(); }
     if (n.isMesh && n.material) (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
-      m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide; m.needsUpdate = true;
+      m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide;
+      if (TL > 0 && n.geometry && n.geometry.attributes._fin && !(n.geometry.attributes._part && (Q.get("partvis") === "1" || Q.get("anatvis") === "1"))) patchFin(m);
+      m.needsUpdate = true;
     });
   });
   // tail-weight each bone by its REST position along the body (matches the school) so the wave whips the real tail, not array-order bones
@@ -116,10 +172,11 @@ new GLTFLoader().load(MODEL, g => {
     const bb = new THREE.Box3().setFromPoints(pts), sz = bb.getSize(new THREE.Vector3());
     const ax = sz.x >= sz.y && sz.x >= sz.z ? "x" : (sz.y >= sz.z ? "y" : "z");
     const lo = bb.min[ax], len = (bb.max[ax] - bb.min[ax]) || 1;
-    const flip = Q.get("flip") === "1";       // tail defaults to the min-axis end (nose-up models); ?flip=1 to swap
-    bones.forEach((bn, i) => { const v = (pts[i][ax] - lo) / len; bn.userData.tw = flip ? v : (1 - v); });
+    const flip = new URLSearchParams(location.search).get("flip") === "1";       // tail defaults to the min-axis end (nose-up models); ?flip=1 to swap
+    bones.forEach((bn, i) => { const v = (pts[i][ax] - lo) / len; bn.userData.tw = bn.userData.rigTw != null ? bn.userData.rigTw : (flip ? v : (1 - v)); });
+    for (const bn of AN.bones) { const v = (bn.getWorldPosition(tmp).applyMatrix4(invRoot)[ax] - lo) / len; bn.userData.tw = bn.userData.rigTw != null ? bn.userData.rigTw : (flip ? v : (1 - v)); }   // (rigged bones carry their own tail-weight)
     if (DISPLAY) {   // turn about the body's middle (skeleton centroid): the bbox centre sits at the nose, so turns swung the whole body round the head
-      const cen = new THREE.Vector3(); pts.forEach(q => cen.add(q)); cen.divideScalar(pts.length);
+      const cen = new THREE.Vector3(); let nc = 0; pts.forEach((q, i) => { if (!GOLD || bones[i].userData.role === "spine") { cen.add(q); nc++; } }); cen.divideScalar(nc);   // rigged: spine joints only (the tail fan would drag the centre aft)
       root.position.set(-cen.x, -cen.y, -cen.z);
     }
   }
@@ -132,23 +189,23 @@ new GLTFLoader().load(MODEL, g => {
     for (const bn of bones) bn.quaternion.copy(bn.userData.q0);
   }
   if (DISPLAY && bones.length > 2) setupFins();
+  if (Q.get("debug") === "1" && !RIG) { let bm = null; root.traverse(n => { if (n.isSkinnedMesh && (!bm || n.geometry.attributes.position.count > bm.geometry.attributes.position.count)) bm = n; }); if (bm) { root.updateMatrixWorld(true); bm.skeleton.update(); const n = bm.geometry.attributes.position.count, r = new Float32Array(n * 3), v = new THREE.Vector3(); for (let i = 0; i < n; i++) { bm.getVertexPosition(i, v); r.set([v.x, v.y, v.z], i * 3); } window.__stretchB = () => stretchB(bm, r); } }
   mixer = new THREE.AnimationMixer(root);
   if (g.animations && g.animations[0]) { action = mixer.clipAction(g.animations[0]); action.play(); }  // rig-less models have no clip
   loop();
-});
+}, undefined, err => { console.warn("model load failed:", MODEL, err);  });
 
-for (const b of document.querySelectorAll("[data-ax]")) b.onclick = () => { AX = b.dataset.ax; document.querySelectorAll("[data-ax]").forEach(x => x.classList.toggle("on", x === b)); };
 let STEP = 90;
 for (const b of document.querySelectorAll("[data-rot]")) b.onclick = () => { const a = b.dataset.rot; CORR[a] = Math.round((CORR[a] + STEP * (+b.dataset.d)) * 100) / 100; };
 document.getElementById("step").onclick = e => { STEP = STEP === 90 ? 5 : 90; e.target.textContent = "step " + STEP + "°"; e.target.classList.toggle("on", STEP === 5); };
 document.getElementById("rreset").onclick = () => { CORR.x = CORR.y = CORR.z = 0; };
-const ampv = document.getElementById("ampv"); ampv.textContent = AMP;
-document.getElementById("up").onclick = () => { AMP = +(AMP + 0.005).toFixed(3); ampv.textContent = AMP; };
-document.getElementById("dn").onclick = () => { AMP = Math.max(0, +(AMP - 0.005).toFixed(3)); ampv.textContent = AMP; };
+const showAmps = () => { for (const a of ["x", "y", "z"]) document.getElementById("ampv-" + a).textContent = +AMPS[a].toFixed(4); };
+showAmps();
+for (const b of document.querySelectorAll("[data-bd]")) b.onclick = () => { const a = b.dataset.bd, d = +b.dataset.d, v = AMPS[a], st = (v > 0.1 || (v >= 0.1 && d > 0)) ? 0.05 : 0.005; AMPS[a] = Math.max(0, +(v + d * st).toFixed(4)); syncAx(); showAmps(); };
 document.getElementById("clip").onclick = e => { CLIP = !CLIP; e.target.classList.toggle("on", CLIP); };
 document.getElementById("proc").onclick = e => { PROC = !PROC; e.target.classList.toggle("on", PROC); };
 document.getElementById("disp").onclick = () => {
-  const u = new URLSearchParams({ display: "1", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, amp: AMP, ax: AX, clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
+  const u = new URLSearchParams({ display: "1", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
   location.href = location.pathname + "?" + u;
 };
 document.getElementById("swim").onclick = e => { SWIM = !SWIM; e.target.textContent = "swim test: " + (SWIM ? "ON" : "OFF"); e.target.classList.toggle("on", SWIM); };
@@ -201,7 +258,7 @@ function pickTarget(t) {
   TGT.set((Math.random() * 2 - 1) * b.x * 0.95, (Math.random() * 2 - 1) * b.y * 0.85, tz);   // anywhere in the tank, edges included
   wallTgt = Math.random() < 0.4;                          // ~40%: swim right up to a wall and brush along it
   if (wallTgt) { const wz = walls(TGT.z); if (Math.random() < 0.6) TGT.x = Math.sign(TGT.x || 1) * wz.x * 1.25; else TGT.y = Math.sign(TGT.y || 1) * wz.y * 1.25; nextPick = t + 9; }
-  tSpeed = 0.55 + Math.random() * 1.0;                   // dawdle ↔ cruise
+  tSpeed = (0.55 + Math.random() * 1.0) * SPEEDK;                   // dawdle ↔ cruise
   nextPick = t + 5 + Math.random() * 7;
 }
 function wander(dt, t) {
@@ -235,13 +292,13 @@ function wander(dt, t) {
   PRV.copy(V);
   LAT.crossVectors(UPV, V).normalize();                   // body's lateral axis (= outer local +X)
   const want = Math.atan2(DES.dot(LAT), DES.dot(V));      // signed yaw still wanted (−π..π)
-  const intent = clamp(want / 1.1, -1, 1);
+  const intent = clamp(want / 1.1, -1, 1); INTENT = intent;
   // gait: a wanted turn starts a stroke early (prep stroke); every glide lasts ≥0.4s
   if (gait === "coast" && (t > gaitEnd || ((Math.abs(intent) > 0.55 || Math.abs(V.z) > 0.7) && t > coastStart + 0.4))) {
-    gait = "burst"; omega = 2 * Math.PI * clamp(1.3 + 1.1 * tSpeed + 0.9 * Math.abs(intent), 1.5, 3.5) / Math.sqrt(ZOOM);   // 1.5–3.5 beats/s, slower for a bigger fish
+    gait = "burst"; omega = 2 * Math.PI * clamp(1.3 + 1.1 * tSpeed + 0.9 * Math.abs(intent), 1.5, 3.5) * RATE / Math.sqrt(ZOOM);   // 1.5–3.5 beats/s, slower for a bigger fish
     gaitEnd = t + (2 + Math.floor(Math.random() * 3)) * (2 * Math.PI / omega);
   } else if (gait === "burst" && t > gaitEnd) {
-    gait = "coast"; coastStart = t; gaitEnd = t + 0.6 + Math.random() * (tSpeed < 0.9 ? 1.4 : 0.8);
+    gait = "coast"; coastStart = t; gaitEnd = t + GLIDE * (0.6 + Math.random() * (tSpeed < 0.9 ? 1.4 : 0.8));
   }
   beat += ((gait === "burst" ? 1 : 0.06) - beat) * (1 - Math.exp(-dt * (gait === "burst" ? 8 : 3.5)));
   // body bend: LEADS with intent, then also holds while the body is still rotating
@@ -307,7 +364,7 @@ function wallCollide(cdt) {
   // pressure: how close any part of the body is to a wall, starting a little BEFORE contact (feel the
   // glass coming) — drives the away-bend in wander() so the body flexes round the wall
   const feel = 0.45 * ZOOM; let prX = 0, prSX = 0, prY = 0, prSY = 0;
-  for (const bn of bones) {
+  for (const bn of (AN.wb || (AN.wb = bones.filter(b => !b.userData.dead).concat(AN.bones.filter(b => b.userData.role === "ray" || b.userData.role === "pec" || b.userData.role === "pech"))))) {
     tipOf(bn, _bp); const e = edgeAt(_bp.z), tw = bn.userData.tw || 0, leaf = !bn.children.some(c => c.isBone);
     const ox = Math.abs(_bp.x) - e.x, oy = Math.abs(_bp.y) - e.y;
     if (ox + feel > prX) { prX = ox + feel; prSX = Math.sign(_bp.x); }
@@ -361,21 +418,46 @@ function wallCollide(cdt) {
 // through still water → drag (linear viscous + quadratic pressure) perpendicular to the ray → torque
 // on its joint → damped torsional spring (softer toward the tip, under-damped so it overshoots and
 // ripples). Dorsal/anal fins also carry a small travelling wave lagging the body wave.
-const FINS = []; let BODY_L = 1;
+const VEIL = { acc: 0, sp: 0, spr: 0 };
+const FINS = [], CH = {}, NB = {}; let BODY_L = 1;
+const IN_PLANE = 0.07, CUM_BEND = Q.has("cum") ? +Q.get("cum") : (PRE.cum != null ? PRE.cum : 0.5), COUPLE = Q.has("couple") ? +Q.get("couple") : 30;   // rigged sheets: max in-plane bend per joint (rad), max cumulative root→tip bend per chain (0.5 rad ≈ 29°), fan-coupling rate (1/s)
 const _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _qf = new THREE.Quaternion(), _qw = new THREE.Quaternion();
+function spreadSign(ch) {   // + rotation about the chain's in-plane axis moves the tip away from the tail axis (spreading the veil)
+  const M = new THREE.Vector3(0, 0, -1), perp = ch.dir.clone().addScaledVector(M, -ch.dir.dot(M)), mv = new THREE.Vector3().crossVectors(ch.nrm, ch.dir);
+  return Math.sign(mv.dot(perp)) || 1;
+}
 function setupFins() {
+  if (RIG) {   // procedural rig: roles are explicit. Every tail/fin bone is a drag-driven damped spring tracking its CHILD joint (leaf: one extrapolated segment) + a travelling ripple about the sheet normal.
+    let tip = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
+    outer.updateMatrixWorld(true);
+    let head = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
+    BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
+    for (const bn of bones) {
+      const u = bn.userData; if (u.role !== "tail" && u.role !== "fin") continue;
+      const d = u.d, leaf = !bn.children.some(c => c.isBone), tailV = u.role === "tail", k = tailV ? (leaf ? 0.7 : 1) * 60 * FK * AT("vk", 1) * Math.pow(AT("vdk", 0.5), d) : (leaf ? 20 : 42) * FK / (1 + 0.25 * d);   // soft + longer-lagging than the betta (FK<1); stiffer toward the root
+      FINS.push({ bn, tipB: bn.children.find(c => c.isBone) || null, k, c: 2 * Math.sqrt(k) * FZ * (tailV ? 1 - 0.55 * d / 3 : 1), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: 0, rig: true, tailV, spr: tailV ? spreadSign(RIG.chains[u.chain]) : 0, dc: 1.6, ci: u.chain, dd: d, dl: RIG.chains[u.chain].dir, nl: RIG.chains[u.chain].nrm, rl: RIG.chains[u.chain].rax, g: TUNE("fg"), mx: TUNE("fmax") * ((tailV ? 0.2 : 0.35) + (tailV ? 0.8 : 0.65) * d / Math.max(1, (u.role === "tail" ? 3 : 2))),   // joint limit grows root→tip (the root joints sit on the body: keep the seam from shearing)
+       rax: u.rax, rip: (u.rip || 0) * RIP, lag: u.lag || 0, role: u.role });
+    }
+    // fan coupling: each tail chain's two angularly-nearest tail chains; CH[c][d] = that chain's fin at joint level d
+    for (const f of FINS) (CH[f.ci] || (CH[f.ci] = []))[f.dd] = f;
+    const tails = RIG.chains.filter(c => c.kind === "tail");
+    for (const c of tails) NB[c.ci] = tails.filter(o => o !== c).sort((a, b) => c.dir.angleTo(a.dir) - c.dir.angleTo(b.dir)).slice(0, 2).map(o => o.ci);
+    return;
+  }
   let tip = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
   const spine = new Set(); for (let b = tip.parent; b && b.isBone; b = b.parent) if ((b.userData.tw || 0) < 0.66) spine.add(b);
   outer.updateMatrixWorld(true);
   let head = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
   BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
+  SPINE_SET = spine;
   const depth = b => { let d = 0; for (let p = b.parent; p && p.isBone && !spine.has(p); p = p.parent) d++; return d; };
   for (const bn of bones) {
-    if (spine.has(bn) || !bn.parent || !bn.parent.isBone || (bn.userData.tw || 0) < 0.1) continue;   // (jaw/gill bones at the head: not fins)
+    if (spine.has(bn) || !bn.parent || !bn.parent.isBone || (bn.userData.tw || 0) < 0.1 || bn.userData.own || bn.userData.dead) continue;   // (jaw/gill bones at the head: not fins)
     const d = depth(bn), leaf = !bn.children.some(c => c.isBone), tw = bn.userData.tw || 0;
-    const k = (leaf ? 20 : 42) / (1 + 0.35 * d);              // stiff near the base, soft at the tips
+    const tailV = tw > 0.72 && !Q.has("noveil");             // caudal veil: much softer, falling ~0.5× per joint toward the edge, low damping on the outer joints (gauze)
+    const k = tailV ? (leaf ? 0.7 : 1) * 34 * AT("vk", 1) * Math.pow(AT("vdk", 0.55), d) : (leaf ? 20 : 42) / (1 + 0.35 * d);              // stiff near the base, soft at the tips
     const dorsalAnal = tw > 0.35 && tw < 0.7;
-    FINS.push({ bn, k, c: 2 * Math.sqrt(k) * 0.24, th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5 });
+    FINS.push({ bn, k, c: 2 * Math.sqrt(k) * (tailV ? 0.26 * (1 - 0.5 * d / 3) : 0.24), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5, tailV, g: tailV ? AT("vg", 0.95) : undefined, mx: tailV ? AT("vmax", 1.5) : undefined, dd: d });
   }
 }
 function finStep(dt) {
@@ -383,7 +465,7 @@ function finStep(dt) {
   outer.updateMatrixWorld(true);
   const Lw = BODY_L * ZOOM;
   for (const f of FINS) {
-    const bn = f.bn; tipOf(bn, _ta);
+    const bn = f.bn; if (f.tipB) f.tipB.getWorldPosition(_ta); else tipOf(bn, _ta);
     if (!f.prev) { f.prev = _ta.clone(); continue; }
     _u.copy(f.prev).sub(_ta).divideScalar(dt * Lw);         // water velocity relative to the ray tip, in body-lengths/s
     f.prev.copy(_ta);
@@ -392,19 +474,577 @@ function finStep(dt) {
     const un = _u.length(), drag = un + 0.6 * un * un;     // viscous + pressure drag
     _ax.crossVectors(seg, _u); if (_ax.lengthSq() > 1e-12) _ax.normalize();
     bn.getWorldQuaternion(_qw).invert(); _ax.applyQuaternion(_qw);    // world torque axis → bone-local
-    const T = 0.55 * f.k * Math.min(drag, 3);              // torque (normalised: ~1 BL/s cross-flow ≈ 0.5 rad of sweep)
+    const T = (f.g || 0.55) * f.k * Math.min(drag, f.dc || 3);              // torque (normalised: ~1 BL/s cross-flow ≈ 0.5 rad of sweep)
     for (let n = Math.ceil(dt / 0.006), h = dt / n; n > 0; n--) {
       const t2 = f.th.lengthSq(), ks = f.k * (1 + t2 / 0.36);   // progressive stiffening: a ray gets stiffer the more it's bent (soft limit, no kink)
       f.om.x += (T * _ax.x - ks * f.th.x - f.c * f.om.x) * h; f.om.y += (T * _ax.y - ks * f.th.y - f.c * f.om.y) * h; f.om.z += (T * _ax.z - ks * f.th.z - f.c * f.om.z) * h;
       f.th.addScaledVector(f.om, h);
     }
-    const a = f.th.length(); if (a > 1.1) { POP.finClamp = Math.max(POP.finClamp, a - 1.1); f.th.multiplyScalar(1.1 / a); f.om.multiplyScalar(0.5); }   // safety only
-    if (a > 1e-5) { _qf.setFromAxisAngle(_tb.copy(f.th).normalize(), Math.min(a, 1.1)); bn.quaternion.multiply(_qf); }
+    if (f.rig) {   // sheet constraints: NO roll about the chain's own axis; in-plane bend (fan spreading) tiny; across-sheet bend free up to the joint limit
+      f.th.addScaledVector(f.dl, -f.th.dot(f.dl)); f.om.addScaledVector(f.dl, -f.om.dot(f.dl));
+      const an = f.th.dot(f.nl), cl = clamp(an, -IN_PLANE, IN_PLANE); if (cl !== an) { f.th.addScaledVector(f.nl, cl - an); f.om.addScaledVector(f.nl, -f.om.dot(f.nl) * 0.6); }
+      const ar = f.th.dot(f.rl), cr = clamp(ar, -f.mx, f.mx); if (cr !== ar) { f.th.addScaledVector(f.rl, cr - ar); f.om.addScaledVector(f.rl, -f.om.dot(f.rl) * 0.5); }
+    }
+    const MXA = f.mx || 1.1, a = f.th.length(); if (!f.rig) if (a > MXA) { POP.finClamp = Math.max(POP.finClamp, a - MXA); f.th.multiplyScalar(MXA / a); f.om.multiplyScalar(0.5); }   // safety only
+    if (f.rig) continue;                                   // rigged: coupled, clamped and applied below
+    if (a > 1e-5) { _qf.setFromAxisAngle(_tb.copy(f.th).normalize(), Math.min(a, MXA)); bn.quaternion.multiply(_qf); }
     if (f.ripple) rotBone(bn, Math.sin(phase - f.lag) * f.ripple * (0.4 + 0.6 * beat));   // travelling ripple, lagging the body wave
+    if (f.tailV) rotBone(bn, Math.sin(phase - f.lag) * AT("vrip", 0.06) * (0.3 + 0.7 * beat) + AT("vfl", 0.05) * (0.2 + clamp(speed, 0, 2)) * Math.min(1, f.dd / 2) * wrnd(performance.now() / 1000 + 0.07 * f.lag, f.lag * 5));   // veil: travelling ripple base→edge + fine speed-scaled flutter on the free edge
+  }
+  if (!RIG) return;
+  // rigged tail/fins, pass 2: (a) fan coupling — each tail chain's across-sheet bend is pulled toward its neighbours' at the same joint level, so lobes spread/fold together and can't cross;
+  // (b) cumulative root→tip bend per chain capped (CUM_BEND); (c) apply bend (across-sheet about rl, in-plane about nl) + a small out-of-plane flutter. No rotation about the chain axis anywhere.
+  const kc = 1 - Math.exp(-dt * COUPLE);
+  for (const c in NB) { const mine = CH[c]; if (!mine) continue;
+    for (let d = 0; d < mine.length; d++) { const f = mine[d]; let m = 0, mo = 0, n = 0; for (const o of NB[c]) { const g = CH[o] && CH[o][d]; if (g) { m += g.th.dot(g.rl); mo += g.om.dot(g.rl); n++; } }
+      if (n) { f.th.addScaledVector(f.rl, (m / n - f.th.dot(f.rl)) * kc); f.om.addScaledVector(f.rl, (mo / n - f.om.dot(f.rl)) * kc); } } }
+  for (const c in CH) { const ch = CH[c]; let cum = 0; for (const f of ch) cum += Math.abs(f.th.dot(f.rl)); if (cum > CUM_BEND) { const k = CUM_BEND / cum; for (const f of ch) { f.th.multiplyScalar(k); f.om.multiplyScalar(k); } } }
+  // veil (tail aft of the peduncle): fan spread/narrow with along-track acceleration (accelerating → the veil streams back and narrows; braking/turning → it billows forward and spreads), fine flutter on the free edge
+  const VSPR = AT("vspr", 0), VFL = AT("vfl", 0), tnow = performance.now() / 1000;
+  VEIL.acc += ((DISPLAY ? (speed - VEIL.sp) / dt : 0) - VEIL.acc) * (1 - Math.exp(-dt / 0.15)); VEIL.sp = speed;
+  VEIL.spr += (clamp(-0.9 * VEIL.acc + 0.25 * Math.abs(steer), -0.6, 0.9) * VSPR - VEIL.spr) * (1 - Math.exp(-dt * 5));
+  for (const f of FINS) {
+    const ar = f.th.dot(f.rl), an = f.th.dot(f.nl), dn = f.dd / 3;
+    const fl = f.tailV ? VFL * (0.2 + clamp(speed, 0, 2)) * dn * wrnd(tnow + 0.11 * f.ci, f.ci * 4 + f.dd) : 0;
+    const qb = f.bn.quaternion.clone().multiply(_qf.setFromAxisAngle(f.rl, ar + fl + Math.sin(phase - f.lag) * f.rip * (0.25 + 0.75 * beat)));
+    const an2 = an + (f.tailV ? f.spr * VEIL.spr * (0.15 + 0.85 * dn) : 0);
+    if (Math.abs(an2) > 1e-5) qb.multiply(_qf.setFromAxisAngle(f.nl, an2));
+    if (f.tailV) { const rr = f.bn.userData.q0.clone().invert().multiply(qb), tw = rr.x * f.dl.x + rr.y * f.dl.y + rr.z * f.dl.z, tl = Math.hypot(tw, rr.w);   // swing-twist: strip the roll about the chain axis that two perpendicular bends compose into
+      if (tl > 1e-6) { _qw.set(f.dl.x * tw / tl, f.dl.y * tw / tl, f.dl.z * tw / tl, rr.w / tl); qb.copy(f.bn.userData.q0).multiply(rr.multiply(_qw.invert())); } }
+    f.bn.quaternion.copy(qb);
   }
 }
 
+
+// ---- procedural rig for the skin-less goldfish.glb (2026-10-11) -----------------------------------------------
+// The file is ONE fused mesh (body+fins+tail, no skin). At load: build a THREE.Skeleton (all bones identity-rotated, so a bone's local
+// axes = the mesh axes) and per-vertex skin weights (≤4 influences, normalised), then swap the Mesh for a SkinnedMesh.
+//   spine   7 bones head→tail base along the body (z, nose +Z), driven by the existing body wave + C-bend
+//   tail    8 chains × 4 bones fanned from the tail base (k-means of the tail's ray directions; see work-goldfish/analyze.py) — passive drag springs + travelling ripple
+//   dorsal  3 chains × 3, anal 2 × 4 (twin), pelvic/pectoral 2 × 3 — same drag springs
+// Weights: spine = linear in z between joints; each chain = angular (tail, rays radiate from the base) or distance-to-axis (fins) gaussian × a gate
+// (aft of the base / outside the body ellipse), split along the chain between the two nearest joints; the rest stays on the spine.
+const GF = {
+  head: 0.84, B: [0, 0, -0.10], spineZ: [0.84, 0.66, 0.48, 0.32, 0.17, 0.03, -0.10],
+  body: { z: [0.95, 0.85, 0.65, 0.45, 0.25, 0.05, -0.1], a: [0.08, 0.15, 0.19, 0.23, 0.23, 0.17, 0.08], b: [0.08, 0.14, 0.22, 0.27, 0.27, 0.24, 0.12], yc: [-0.12, -0.10, -0.07, -0.05, -0.03, 0.0, 0.0] },
+  tail: [[0.465, 0.34, -0.815, 0.94], [0.26, 0.725, -0.635, 0.93], [0.45, -0.53, -0.72, 0.91], [0.335, -0.855, -0.405, 0.80]],   // [dx,dy,dz,len] for +x; mirrored for −x
+  fins: []   // (generated by gfFins(): dorsal + anal RAYS (own travelling-wave chains) and the pectoral fans)
+};
+let RIG = null;
+function rigGoldfish(root) {
+  let mesh = null; root.traverse(n => { if (n.isMesh && !mesh) mesh = n; });
+  if (!mesh) return;
+  const V3 = THREE.Vector3, geo = mesh.geometry, pa = geo.attributes.position, na = geo.attributes.normal, nV = pa.count;
+  const lerpT = (tab, z) => { const Z = GF.body.z; if (z >= Z[0]) return tab[0]; if (z <= Z[Z.length - 1]) return tab[tab.length - 1];
+    for (let i = 0; i < Z.length - 1; i++) if (z <= Z[i] && z >= Z[i + 1]) { const f = (Z[i] - z) / (Z[i] - Z[i + 1]); return tab[i] * (1 - f) + tab[i + 1] * f; } };
+  const defs = [], chains = [], B = new V3(...GF.B);
+  const add = (name, p, parent, role, tw, chain, d) => { defs.push({ name, p, parent, role, tw, chain, d }); return defs.length - 1; };
+  const sp = GF.spineZ.map((z, i) => add("sp" + i, new V3(0, lerpT(GF.body.yc, z), z), i ? i - 1 : -1, "spine", 0.55 * (GF.head - z) / (GF.head - GF.spineZ[GF.spineZ.length - 1]), -1, i));
+  const mkChain = (name, kind, root, tip, n, parent, sigma) => {
+    const dir = tip.clone().sub(root), len = dir.length(); dir.divideScalar(len); const ids = [];
+    for (let i = 0; i < n; i++) {
+      const p = root.clone().addScaledVector(dir, len * i / n);
+      const tw = kind === "tail" ? 0.55 + 0.45 * i / n : clamp(0.55 * (GF.head - p.z) / (GF.head - GF.B[2]), 0.12, 0.34);   // fins: front/soft-fin class in wallCollide
+      ids.push(add(name + "_" + i, p, i ? ids[i - 1] : parent, kind === "tail" ? "tail" : kind === "fin" ? "fin" : kind, tw, chains.length, i));
+    }
+    chains.push({ name, kind, root, dir, len, n, ids, sigma, ci: chains.length, S: new Float64Array(6), share: 0 });
+  };
+  GF.tail.forEach(([x, y, z, L], i) => [1, -1].forEach(sg => { const d = new V3(sg * x, y, z).normalize(); mkChain("tail" + (sg > 0 ? "R" : "L") + i, "tail", B.clone(), B.clone().addScaledVector(d, L), 4, sp[sp.length - 1], 0); }));
+  const tails = chains.filter(c => c.kind === "tail");
+  for (const c of tails) { let nn = 9; for (const o of tails) if (o !== c) nn = Math.min(nn, Math.acos(clamp(c.dir.dot(o.dir), -1, 1))); c.sigma = (Q.has("sg") ? +Q.get("sg") : 0.5) * nn; }   // angular gaussian ~ the neighbour spacing
+  const nearSp = root => { let best = 0; GF.spineZ.forEach((z, i) => { if (Math.abs(z - root.z) < Math.abs(GF.spineZ[best] - root.z)) best = i; }); return sp[best]; };
+  const hinges = {};
+  for (const f of gfFins()) {
+    const root = new V3(...f.root); let par = nearSp(root);
+    if (f.hinge) { if (hinges[f.hinge] == null) hinges[f.hinge] = add(f.hinge, new V3(...f.hingePos), par, "pech", 0.2, -1, 0); par = hinges[f.hinge]; }
+    mkChain(f.name, f.kind, root, new V3(...f.tip), f.n, par, f.sigma); Object.assign(chains[chains.length - 1], { group: f.group, k: f.k, side: f.side || 0, hinge: f.hinge });
+  }
+  const bs = defs.map(d => { const b = new THREE.Bone(); b.name = d.name; Object.assign(b.userData, { role: d.role, rigTw: d.tw, d: d.d, chain: d.chain }); if (d.role === "ray" || d.role === "pec" || d.role === "pech") { b.userData.anat = true; b.userData.ax = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)]; } return b; });
+  defs.forEach((d, i) => { if (d.parent >= 0) { bs[d.parent].add(bs[i]); bs[i].position.copy(d.p).sub(defs[d.parent].p); } else bs[i].position.copy(d.p); });
+  // ---- skin weights ----
+  const idx = new Uint16Array(nV * 4), wts = new Float32Array(nV * 4), region = new Uint8Array(nV);   // region: 0 body/spine, 1 tail, 2 fin
+  const ss = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const p = new V3(), v = new V3(), cand = []; const sz = GF.spineZ, nSp = sz.length;
+  const addChain = (ch, w) => { v.copy(p).sub(ch.root); const t = clamp(v.dot(ch.dir) / ch.len, 0, 1), u = t * ch.n, i0 = Math.min(Math.floor(u), ch.n - 1), f = u - i0;
+    if (i0 >= ch.n - 1) cand.push([ch.ids[ch.n - 1], w]); else { cand.push([ch.ids[i0], w * (1 - f)]); cand.push([ch.ids[i0 + 1], w * f]); } };
+  for (let i = 0; i < nV; i++) {
+    p.fromBufferAttribute(pa, i);
+    const rho = Math.hypot(p.x / lerpT(GF.body.a, p.z), (p.y - lerpT(GF.body.yc, p.z)) / lerpT(GF.body.b, p.z));
+    let r1 = 0, c1 = -1, r2 = 0, c2 = -1;
+    for (let c = 0; c < chains.length; c++) {
+      const ch = chains[c]; let R;
+      v.copy(p).sub(ch.root);
+      if (ch.kind === "tail") { const r = v.length(); if (r < 1e-4) continue; const th = Math.acos(clamp(v.dot(ch.dir) / r, -1, 1)); R = ss(-0.12, 0.5, B.z - p.z) * Math.exp(-((th / ch.sigma) ** 2)); }
+      else { const t = clamp(v.dot(ch.dir) / ch.len, 0, 1), d = v.addScaledVector(ch.dir, -t * ch.len).length(); R = ss(1.0, 1.35, rho) * Math.exp(-((d / ch.sigma) ** 2)); }
+      if (R > r1) { r2 = r1; c2 = c1; r1 = R; c1 = c; } else if (R > r2) { r2 = R; c2 = c; }
+    }
+    let s = Math.min(1, r1 + r2); cand.length = 0;
+    if (c1 >= 0 && chains[c1].kind !== "tail" && rho > 1.25 && r1 > 0.04) s = 1;
+    else if (c1 >= 0 && chains[c1].kind === "tail" && r1 > 1e-5) s += (1 - s) * ss(0.12, 0.4, B.z - p.z);   // tail veil well aft of the peduncle: no stray spine weight on the sheets   // fin web outside the body belongs to the nearest fin chains entirely (no stray spine weight between rays)
+    if (s < 1) {
+      const hr = geo.attributes._part ? ss(0.40, 0.50, p.z) : 0;   // mouth models only: the head (z >= 0.50) is 100 % sp0, eased in over z 0.40-0.50 (mouth/gill rig: the jaw+opercula must not ride a flexing spine)
+      const w = (1 - s) * (1 - hr);
+      if (hr > 0) cand.push([sp[0], (1 - s) * hr]);
+      if (p.z >= sz[0]) cand.push([sp[0], w]); else if (p.z <= sz[nSp - 1]) cand.push([sp[nSp - 1], w]);
+      else for (let k = 0; k < nSp - 1; k++) if (p.z <= sz[k] && p.z >= sz[k + 1]) { const f = (sz[k] - p.z) / (sz[k] - sz[k + 1]); cand.push([sp[k], w * (1 - f)], [sp[k + 1], w * f]); break; }
+    }
+    if (s > 0 && c1 >= 0) { const tot = r1 + r2; addChain(chains[c1], s * r1 / tot); if (c2 >= 0 && r2 > 0) addChain(chains[c2], s * r2 / tot); }
+    cand.sort((a, b) => b[1] - a[1]); let sum = 0; const m = Math.min(4, cand.length); for (let k = 0; k < m; k++) sum += cand[k][1];
+    for (let k = 0; k < m; k++) { idx[i * 4 + k] = cand[k][0]; wts[i * 4 + k] = cand[k][1] / sum; }
+    if (s > 0 && c1 >= 0) {   // chain bookkeeping: dominant chain share, and the weighted normal covariance (→ the sheet normal = ripple direction)
+      region[i] = s > 0.5 ? (chains[c1].kind === "tail" ? 1 : 2) : 0;
+      const nx = na.getX(i), ny = na.getY(i), nz = na.getZ(i), w1 = s * r1 / (r1 + r2), ch = chains[c1]; ch.share += w1;
+      ch.S[0] += w1 * nx * nx; ch.S[1] += w1 * ny * ny; ch.S[2] += w1 * nz * nz; ch.S[3] += w1 * nx * ny; ch.S[4] += w1 * nx * nz; ch.S[5] += w1 * ny * nz;
+    }
+  }
+  // sheet normal per chain (dominant eigenvector, power iteration), oriented toward +x/+y so mirrored sheets swing the same way; ripple axis = dir × normal
+  for (const ch of chains) {
+    const S = ch.S; let n = new V3(1, 1, 1).normalize();
+    for (let k = 0; k < 24; k++) { n.set(S[0] * n.x + S[3] * n.y + S[4] * n.z, S[3] * n.x + S[1] * n.y + S[5] * n.z, S[4] * n.x + S[5] * n.y + S[2] * n.z); if (n.lengthSq() < 1e-12) n.set(1, 0, 0); n.normalize(); }
+    if (n.x + n.y < 0) n.negate();
+    // swing direction = the world axis (x or y) closest to the sheet normal, made perpendicular to the chain — NOT the raw (tilted, mirrored) normal, so all chains swing the same way
+    // (mirrored raw normals made neighbouring sheets shear); in-plane axis nrm = that swing dir, across-sheet axis rax = dir × swing dir
+    const e = Math.abs(n.x) >= Math.abs(n.y) ? new V3(1, 0, 0) : new V3(0, 1, 0); e.addScaledVector(ch.dir, -e.dot(ch.dir)).normalize();
+    ch.nrm = e; ch.rax = new V3().crossVectors(ch.dir, e).normalize();
+    ch.ids.forEach((id, k) => { const u = bs[id].userData; u.rax = ch.rax; u.rip = (ch.kind === "tail" ? 0.05 : 0.035) * (0.35 + 0.65 * (k + 1) / ch.n); u.lag = 0.9 * k + (ch.kind === "tail" ? 0.35 * ch.ci : 0.5); });
+  }
+  geo.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(idx, 4)); geo.setAttribute("skinWeight", new THREE.Float32BufferAttribute(wts, 4));
+  const sm = new THREE.SkinnedMesh(geo, mesh.material); sm.name = mesh.name || "goldfish"; sm.frustumCulled = false;
+  const par = mesh.parent; par.remove(mesh); par.add(sm); sm.add(bs[0]); root.updateMatrixWorld(true);
+  sm.bind(new THREE.Skeleton(bs));
+  RIG = { sm, bs, chains, region, defs, rest: null };
+  anatGoldfish(root, sm, bs);
+  if (Q.get("partvis") === "1" && geo.attributes._part) partVis(sm);
+  if (Q.get("rigvis") === "1") {   // ?rigvis=1: colour each vertex by its dominant bone (hue per bone) — weight sanity check
+    const col = new Float32Array(nV * 3), c = new THREE.Color();
+    for (let i = 0; i < nV; i++) { let bi = idx[i * 4]; c.setHSL((bi * 0.618034) % 1, 0.85, 0.5); col.set([c.r, c.g, c.b], i * 3); }
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3)); sm.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  }
+}
+
+// ================= ANATOMY (2026-10-11): eyes · gills + jaw · pectoral rowing · dorsal/anal ray waves =================
+// Everything here works in the model's REST frame ("root frame": x = lateral, y = up, z = nose) for BOTH fish. New procedural bones
+// are created with their world rest frame = the root frame (so a rotation "about root Y" is just local Y), skinned smoothly onto the
+// nearby vertices only (reskin), and driven by anatStep(). Legacy bones are left alone (the betta's clip + drag springs keep the tail).
+//   eyes     conjugate saccades ±15° (2–25° jumps every 1–3 s, 30–80 ms ease-out, per-eye settling), anticipatory jump toward a turn, counter-rotation (VOR) while the body yaws
+//   gills    opercula flare 4–10° about a front-upper hinge ~70/min calm → ~120/min with effort; lower jaw opens in counter-phase (opercula lag the mouth by ~0.4 cycle)
+//   pectoral rowing stroke: backward power stroke spread, forward recovery ~50% folded + feathered; alternate at hover, sync-forward braking, outer fin beats/inner holds in turns; outer rays trail
+//   dorsal/anal  per-ray chains driven by a travelling wave front→back (phase step/ray), followers softer by 0.5×/joint (damped springs), water-drag bend, speed-scaled flutter on the free edge; bend only (no roll), neighbour coupling, capped cumulative bend
+const AT = (k, d) => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : d));
+let POSE = false;   // ?debug=1 __pose(true): fish frozen at rest at the origin (body wave, eyes, clip, anat curves off) for the mouth/gill tests
+const AN = { eyes: [], ops: [], jaw: null, pecs: [], rays: [], bones: [], own: [], ready: false, S: null };
+const AXV = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+const ss01 = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const _qa = new THREE.Quaternion();
+function gfFins() {   // goldfish fin specs: kind ray (dorsal/anal: wave chains) | pec (pectoral fan under a hinge bone)
+  const L = [], lerp3 = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+  const dF = [[0, 0.20, 0.46], [0, 0.63, 0.40]], dM = [[0, 0.22, 0.30], [0, 0.64, 0.22]], dR = [[0, 0.18, 0.14], [0, 0.52, 0.0]], ND = Math.round(AT("nd", 8));
+  for (let i = 0; i < ND; i++) { const t = i / (ND - 1), A = t < 0.5 ? [dF, dM, t * 2] : [dM, dR, (t - 0.5) * 2];
+    L.push({ name: "dorsal" + i, kind: "ray", group: "dorsal", k: i, root: lerp3(A[0][0], A[1][0], A[2]), tip: lerp3(A[0][1], A[1][1], A[2]), n: 3, sigma: 0.32 / (ND - 1) * 1.1 }); }
+  for (const sg of [1, -1]) for (let i = 0; i < 3; i++) { const o = (i - 1) * 0.07;
+    L.push({ name: "anal" + (sg > 0 ? "R" : "L") + i, kind: "ray", group: "anal" + (sg > 0 ? "R" : "L"), k: i, side: sg, root: [sg * 0.09, -0.26, 0.30 + o * 0.8], tip: [sg * 0.22, -0.68, 0.08 + o * 1.3], n: 3, sigma: 0.11 }); }
+  const NP = Math.round(AT("np", 4));
+  for (const sg of [1, -1]) for (let i = 0; i < NP; i++) { const f = i / (NP - 1);
+    L.push({ name: "pec" + (sg > 0 ? "R" : "L") + i, kind: "pec", group: "pec" + (sg > 0 ? "R" : "L"), k: i, side: sg, hinge: "pech" + (sg > 0 ? "R" : "L"), hingePos: [sg * 0.15, -0.25, 0.47],
+      root: [sg * 0.17, -0.26 - 0.01 * f, 0.55 - 0.15 * f], tip: [sg * 0.44, -0.31 - 0.02 * f, 0.47 - 0.19 * f], n: 3, sigma: 0.06 }); }
+  return L;
+}
+function mkBone(name, parent, pos, role, ud) {   // new bone at root-frame position `pos`; its world REST orientation = the root frame
+  const b = new THREE.Bone(); b.name = name; Object.assign(b.userData, { role, anat: true }, ud || {});
+  parent.add(b); parent.updateWorldMatrix(true, false);
+  const pm = parent.matrixWorld, pq = new THREE.Quaternion(), ps = new THREE.Vector3(), pp = new THREE.Vector3(); pm.decompose(pp, pq, ps);
+  b.position.copy(pos).applyMatrix4(new THREE.Matrix4().copy(pm).invert()); b.quaternion.copy(pq).invert(); b.updateMatrixWorld(true);
+  b.userData.ax = AXV.map(v => v.clone());
+  return b;
+}
+// reskin: add `newBones` to the skeleton shared by `meshes` and edit the skin weights. ops (per mesh):
+//   { bone, fn(i,p) → a∈[0,1] }  blend: existing weights scale by (1−a), the new bone gets a
+//   { from:Set(old bone idx), to:[{bone, fn}] }  transfer: the old bones' total weight is redistributed over the new bones in proportion to fn
+function reskin(meshes, newBones, opsFor) {
+  const old = meshes[0].skeleton.bones, nb0 = old.length, all = old.concat(newBones), bi = new Map(newBones.map((b, k) => [b, nb0 + k]));
+  const inv = meshes[0].skeleton.boneInverses.map(m => m.clone()).concat(newBones.map(b => b.matrixWorld.clone().invert()));
+  const Mr = meshes[0].skeleton.bones[0].matrixWorld.clone().multiply(meshes[0].skeleton.boneInverses[0]);   // rest map: mesh-local vertex → root frame (identity for the goldfish; the betta's file bakes a node transform into its inverse binds)
+  newBones.forEach((b, k) => inv[nb0 + k].multiply(Mr));   // inverse bind of a new bone = B⁻¹·Mr, so  B·IBM = Mr  like every old bone
+  const skel = new THREE.Skeleton(all, inv), p = new THREE.Vector3();
+  for (const mesh of meshes) {
+    const geo = mesh.geometry, pa = geo.attributes.position, nV = pa.count, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, ops = opsFor(mesh) || [];
+    const idx = new Uint16Array(nV * 4), wts = new Float32Array(nV * 4), C = [];
+    for (let i = 0; i < nV; i++) {
+      p.fromBufferAttribute(pa, i).applyMatrix4(Mr); C.length = 0;
+      for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > 0) C.push([si.getComponent(i, k), w]); }
+      for (const op of ops) {
+        if (op.set) { const r = op.set(i); if (r) { C.length = 0; for (const [b, w] of r) C.push([typeof b === "number" ? b : bi.get(b), w]); } }   // mouth models: per-vertex weights from _PART/_WGT replace the candidates
+        else if (op.from) {
+          let so = 0; for (const c of C) if (op.from.has(c[0])) { so += c[1]; c[1] = 0; }
+          if (so > 1e-3) { let tot = 0; const sh = op.to.map(t => { const v = Math.max(0, t.fn(i, p)); tot += v; return v; }); if (tot > 1e-9) for (let k = 0; k < sh.length; k++) if (sh[k] / tot > 0.002) C.push([bi.get(op.to[k].bone), so * sh[k] / tot]); }
+        } else if (op.keepBones) { const a = op.fn(i, p); if (a > 0.002) { const keep = op.keepSet || (op.keepSet = new Set(op.keepBones.map(b => bi.get(b))));   // C18: a pre-existing head op yields to the mouth/gill parts: part-bone weights are kept, the eye gets a*(1-w_part), sp0 scales by (1-a)
+            let wpart = 0; for (const c of C) if (keep.has(c[0])) wpart += c[1]; for (const c of C) if (!keep.has(c[0])) c[1] *= 1 - a; C.push([bi.get(op.bone), a * (1 - wpart)]); } }
+        else { const a = op.fn(i, p); if (a > 0.002) { for (const c of C) c[1] *= 1 - a; C.push([bi.get(op.bone), a]); } }
+      }
+      C.sort((x, y) => y[1] - x[1]); let s = 0; const m = Math.min(4, C.length); for (let k = 0; k < m; k++) s += C[k][1];
+      if (s <= 0) { idx[i * 4] = 0; wts[i * 4] = 1; continue; }
+      for (let k = 0; k < m; k++) { idx[i * 4 + k] = C[k][0]; wts[i * 4 + k] = C[k][1] / s; }
+    }
+    geo.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(idx, 4)); geo.setAttribute("skinWeight", new THREE.Float32BufferAttribute(wts, 4));
+    mesh.bind(skel, mesh.bindMatrix.clone());
+  }
+  return skel;
+}
+function anatVis(meshes) {   // ?anatvis=1: colour = which anatomy bone owns the vertex (eye green, operculum yellow, jaw magenta, rays cyan, pectoral orange), grey = body
+  const col = { eye: [0.1, 1, 0.1], op: [1, 0.9, 0], jaw: [1, 0.1, 1], ray: [0, 0.9, 1], pec: [1, 0.5, 0], pech: [1, 0.5, 0] };
+  for (const m of meshes) { const g = m.geometry, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = g.attributes.position.count, c = new Float32Array(n * 3), bn = m.skeleton.bones;
+    for (let i = 0; i < n; i++) { const r = [0.35, 0.35, 0.35]; let w = 0; for (let k = 0; k < 4; k++) { const b = bn[si.getComponent(i, k)], cc = col[b.userData.role] || (b.userData.own ? col.pec : null); if (cc) { const ww = sw.getComponent(i, k); for (let q = 0; q < 3; q++) r[q] = r[q] * (1 - ww) + cc[q] * ww; w += ww; } } c.set(r, i * 3); }
+    g.setAttribute("color", new THREE.BufferAttribute(c, 3)); m.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }); }
+}
+const gaussRay = (p, A, D, len, sigma) => { const v = _va.copy(p).sub(A), t = clamp(v.dot(D) / len, 0, 1), d2 = v.addScaledVector(D, -t * len).lengthSq(); return [Math.exp(-d2 / (sigma * sigma)) + 1e-7 / (1 + d2 * 400), t]; };
+const _va = new THREE.Vector3();
+// register the anat bones' q0 (rest) now, since they join the scene after the legacy q0 pass would otherwise miss them
+function finishAnat(bs) { for (const b of bs) { b.userData.q0 = b.quaternion.clone(); b.userData.p0 = b.position.clone(); AN.bones.push(b); } }
+// ray chain record: bones root→tip, dir/normal/bend axis in root frame
+function mkRay(group, k, bonesArr, base, tip, n) {
+  const d = tip.clone().sub(base), len = d.length(); d.divideScalar(len); const a = new THREE.Vector3().crossVectors(d, n).normalize();
+  return { group, k, bones: bonesArr, d, len, n: n.clone(), a, th: bonesArr.map(() => 0), om: bonesArr.map(() => 0), prev: bonesArr.map(() => null), ph: Math.random() * 6 };
+}
+// ?partvis=1 (models carrying the mouth data only): colour = the _PART/_WGT bone part of each vertex; interior surfaces override (mouth interior magenta, gill cavity + flap underside cyan)
+function partVis(sm) {
+  const g = sm.geometry, pt = g.attributes._part, wg = g.attributes._wgt, n = g.attributes.position.count, col = new Float32Array(n * 3);
+  const C = { 1: [0, 0, 1], 2: [1, 0, 0], 3: [0.5, 0, 1], 4: [0.5, 0, 1], 5: [1, 1, 0], 6: [1, 1, 0], 7: [1, 1, 0], 8: [1, 1, 0] };
+  for (let i = 0; i < n; i++) {
+    const p0 = pt.getX(i), p1 = pt.getY(i), cl = pt.getZ(i), w0 = wg.getX(i), w1 = wg.getY(i); let c = [0.5, 0.5, 0.5];
+    if (cl === 1) c = [1, 0, 1]; else if (cl === 2 || cl === 3) c = [0, 1, 1]; else if (p0 > 0 && w0 >= w1) c = C[p0]; else if (p1 > 0 && w1 > 0) c = C[p1]; else if (p0 > 0 && w0 > 0) c = C[p0];
+    col.set(c, i * 3);
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3)); sm.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+}
+// ================= MOUTH + GILLS (goldfish-mouth.glb): hinged lower jaw, protrusible premaxilla, maxillae, opercula, branchiostegals =================
+// geometry: the mouth slit + gill slits are real cuts (twinned vertices) with pockets; per-vertex _PART (uint8 x4: bone part 0, part 1, surface class, 0) + _WGT (float x2) give the bone weights (remainder = sp0).
+// bone parts: 1 premax, 2 jaw, 3 maxR, 4 maxL, 5 opR, 6 opL, 7 brR, 8 brL.  Landmarks (pivots) come from geometry.userData.mouthRig, written by work-goldfish/mouth/build_mouth.py: never retype them here.
+function mouthBones(sm, head, nb, ops, MR) {
+  const V3 = THREE.Vector3, at = a => new V3(...a), g = sm.geometry, pt = g.attributes._part, wg = g.attributes._wgt;
+  const jaw = mkBone("jaw", head, at(MR.J), "jaw", { skipWall: true, rigTw: 0.03 });
+  const premax = mkBone("premax", head, at(MR.P), "premax", { skipWall: true, rigTw: 0.03 });
+  const mx = {}, op = {}, br = {};
+  for (const [sg, k] of [[1, "R"], [-1, "L"]]) {
+    mx[k] = mkBone("max" + k, head, at(MR.M[k]), "max", { side: sg, skipWall: true, rigTw: 0.03 });
+    op[k] = mkBone("op" + k, head, at(MR.H0[k]), "op", { side: sg, skipWall: true, rigTw: 0.03 }); op[k].userData.ax[1] = new V3(0, -sg, 0);       // positive = trailing edge out
+    br[k] = mkBone("br" + k, head, at(MR.Br[k]), "br", { side: sg, skipWall: true, rigTw: 0.03 }); br[k].userData.ax[2] = new V3(0, 0, sg);          // positive = flap out/down
+    AN.ops.push({ bone: op[k], side: sg });
+  }
+  const all = [jaw, premax, mx.R, mx.L, op.R, op.L, br.R, br.L]; nb.push(...all);
+  head.updateWorldMatrix(true, false); const hq = new THREE.Quaternion(); head.getWorldQuaternion(hq);
+  const dloc = at(MR.d).applyQuaternion(hq.clone().invert());
+  const B = [null, premax, jaw, mx.R, mx.L, op.R, op.L, br.R, br.L];
+  ops.unshift({ set: i => {
+    const p0 = pt.getX(i), p1 = pt.getY(i), w0 = wg.getX(i), w1 = wg.getY(i); if (w0 + w1 <= 1e-6) return null;   // C5: no mouth weight -> default rig weighting
+    const r = []; if (p0 && w0 > 0) r.push([B[p0], w0]); if (p1 && w1 > 0) r.push([B[p1], w1]); const rest = 1 - w0 - w1; if (rest > 1e-6) r.push([0, rest]); return r; } });
+  AN.jaw = { bone: jaw };
+  AN.mouth = { rig: MR, jaw, premax, mx: [mx.R, mx.L], op: [op.R, op.L], br: [br.R, br.L], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "" };
+}
+const mpulse = x => { x = ((x % 1) + 1) % 1; return x < 0.35 ? ss01(0, 0.35, x) : (x < 0.85 ? 1 - ss01(0.35, 0.85, x) : 0); };   // breathing pulse over one cycle
+function mouthEvent(kind, u) {   // event profile at u = t/T in [0,1] -> { jaw (deg), premax (units), op (deg), br (deg) }
+  const sn2 = x => Math.pow(Math.sin(Math.PI * x), 2);
+  if (kind === "gulp" || kind === "yawn") {
+    const JP = kind === "yawn" ? 30 : 25, PP = kind === "yawn" ? 0.03 : 0.02;
+    const jaw = u < 0.35 ? JP * (1 - Math.pow(1 - u / 0.35, 2)) : u < 0.45 ? JP : u < 0.85 ? JP * (1 - ss01(0.45, 0.85, u)) : 0;
+    const pm = u < 0.25 ? 0 : u < 0.85 ? PP * ss01(0.25, 0.55, u) : PP * (1 - ss01(0.85, 1.0, u));
+    const gb = u < 0.45 ? 0.5 * u / 0.45 : 0.5 + 0.5 * (u - 0.45) / 0.55;
+    return { jaw, premax: pm, op: 10 * sn2(u), br: 8 * sn2(gb) };
+  }
+  if (kind === "prot") return { jaw: 0, premax: 0.012 * sn2(u), op: 0, br: 0 };
+  if (kind === "cough") { const t = u * 0.27; return { jaw: 0, premax: 0, op: 10 * (t < 0.12 ? ss01(0, 0.12, t) : 1 - ss01(0.12, 0.27, t)), br: 0 }; }
+  return { jaw: 0, premax: 0, op: 0, br: 0 };
+}
+const MEV = { gulp: { T: 0.6 }, yawn: { T: 1.2 }, prot: { T: 0.25 }, cough: { T: 0.27 } };
+function mouthApply(v) {
+  const M = AN.mouth; if (!M) return;
+  rotAx(M.jaw, 0, v.jaw * D2R);
+  M.premax.position.copy(M.premax.userData.p0).addScaledVector(M.dloc, v.premax);
+  const m = Math.min(20, 0.5 * v.jaw + 400 * v.premax) * D2R; for (const b of M.mx) rotAx(b, 0, m);
+  for (const b of M.op) rotAx(b, 1, v.op * D2R);
+  for (const b of M.br) rotAx(b, 2, v.br * D2R);
+  M.cur = { jaw: v.jaw, premax: v.premax, op: v.op, br: v.br };
+}
+function mouthPose() { const M = AN.mouth; mouthApply(M.force || { jaw: 0, premax: 0, op: 0, br: 0 }); }
+function mouthStep(S, dt, t) {
+  const M = AN.mouth; let v, name = "";
+  const th = ((S.bph / (2 * Math.PI)) % 1 + 1) % 1, wrapped = th < M.prevTh; M.prevTh = th;
+  const rnd = (a, b) => a + (b - a) * Math.random();
+  if (M.due === null) M.due = { gulp: t + rnd(8, 25), prot: t + rnd(4, 12), yawn: t + rnd(60, 180), cough: t + rnd(40, 80) };
+  if (M.force) { v = M.force; name = "force"; }
+  else {
+    if (M.eventsOn && !M.act) {   // start due events (a gulp/yawn waits for the next theta = 0)
+      for (const k of ["yawn", "gulp", "cough", "prot"]) if (t >= M.due[k] && (k === "cough" || k === "prot" || wrapped)) {
+        M.act = { kind: k, t0: t, n: k === "prot" ? 2 + Math.floor(Math.random() * 3) : 1 }; break; }
+    }
+    if (M.act) {
+      const A = M.act, T = MEV[A.kind].T, u = (t - A.t0) / T;
+      if (u >= 1) {
+        if (A.kind === "prot" && A.n > 1) { A.n--; A.t0 = t; v = mouthEvent("prot", 0); }
+        else {
+          const k = A.kind; M.act = null; const rate = Math.max(S.rate, 30) / 60;
+          if (k === "gulp" || k === "yawn") M.supp = t + 1 / rate;
+          if (M.due[k] != null) M.due[k] = t + (k === "gulp" ? (S.eff > 0.5 ? rnd(6, 15) : rnd(8, 25)) : k === "prot" ? rnd(4, 12) : k === "yawn" ? rnd(60, 180) : rnd(40, 80));
+          v = null;
+        }
+      } else v = mouthEvent(A.kind, u);
+      if (M.act) name = A.kind;
+    }
+    if (!v) {   // breathing (suppressed for one cycle after a gulp/yawn)
+      const k = t < M.supp ? 0 : 1;
+      const jamp = 5 + 1.0 * S.eff, oamp = Math.min(8, 6 * (1 + 0.35 * S.eff));
+      v = { jaw: k * mpulse(th) * jamp, premax: 0, op: k * mpulse(th - 0.40) * oamp, br: k * mpulse(th - 0.35) * 3 };
+    }
+  }
+  M.evn = name; S.jawAng = v.jaw * D2R; S.opAng = v.op * D2R; mouthApply(v);
+}
+// ---- goldfish: eye / operculum / jaw bones (the dorsal/anal/pectoral rays are built in rigGoldfish) ----
+const GFA = { eye: [0.10, -0.035, 0.83], eyeR: [0.075, 0.125], eyeX: 0.07,
+  op: [0.18, -0.05, 0.645], opR: [0.11, 0.17], opHinge: [0.15, -0.02, 0.745],
+  jawPivot: [0, -0.115, 0.76], jawY: -0.10, jawZ: 0.80 };
+function anatGoldfish(root, sm, bs) {
+  const V3 = THREE.Vector3, head = bs[0], nb = [], ops = [], at = a => new V3(...a);
+  const MR = sm.geometry.userData.mouthRig, PT = !!(MR && sm.geometry.attributes._part && sm.geometry.attributes._wgt);   // PT: the model carries the mouth/gill cut + _PART/_WGT -> hinged-jaw rig (below); other goldfish files keep the gaussian jaw/operculum
+  for (const sg of [1, -1]) {
+    const c = at(GFA.eye).multiply(new V3(sg, 1, 1)), eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true, rigTw: 0.02 }); nb.push(eb);
+    ops.push({ bone: eb, fn: (i, p) => { const d = p.distanceTo(c), g = ss01(GFA.eyeX * 0.6, GFA.eyeX * 1.3, sg * p.x); return ss01(GFA.eyeR[1], GFA.eyeR[0], d) * g; } });
+    if (PT) { AN.eyes.push({ bone: eb, side: sg }); continue; }
+    const oc = at(GFA.op).multiply(new V3(sg, 1, 1)), hp = at(GFA.opHinge).multiply(new V3(sg, 1, 1)), ob = mkBone("op" + (sg > 0 ? "R" : "L"), head, hp, "op", { side: sg, skipWall: true, rigTw: 0.05 }); nb.push(ob);
+    ops.push({ bone: ob, fn: (i, p) => { const r = Math.hypot((p.z - oc.z) / GFA.opR[0], (p.y - oc.y) / GFA.opR[1]); return ss01(1.0, 0.5, r) * ss01(0.06, 0.14, sg * p.x); } });
+    AN.eyes.push({ bone: eb, side: sg }); AN.ops.push({ bone: ob, side: sg });
+  }
+  if (PT) { mouthBones(sm, head, nb, ops, MR); const M_ = AN.mouth, kb = [M_.jaw, M_.premax, ...M_.mx, ...M_.op, ...M_.br]; for (const o of ops) if (o.bone && o.bone.userData.role === "eye") o.keepBones = kb; }
+  else {
+  const jb = mkBone("jaw", head, at(GFA.jawPivot), "jaw", { skipWall: true, rigTw: 0.03 }); nb.push(jb);
+  ops.push({ bone: jb, fn: (i, p) => ss01(GFA.jawY, GFA.jawY - 0.03, p.y) * ss01(GFA.jawZ - 0.04, GFA.jawZ + 0.06, p.z) * ss01(0.12, 0.05, Math.abs(p.x)) });
+  AN.jaw = { bone: jb }; }
+  const OFFG = (Q.get("anoff") || "").split(","); const opsF = ops.filter(o => o.set ? !OFFG.includes("mouth") : !OFFG.includes(o.bone.userData.role));
+  reskin([sm], nb, () => opsF); if (Q.get("anatvis") === "1") anatVis([sm]); finishAnat(nb); finishAnat(bs.filter(b => b.userData.anat));
+  // rays + pectoral fans from the rig chains
+  const byGroup = {};
+  for (const ch of RIG.chains) if (ch.kind === "ray" || ch.kind === "pec") (byGroup[ch.group] || (byGroup[ch.group] = [])).push(ch);
+  const NX = new V3(1, 0, 0), NY = new V3(0, 1, 0);
+  for (const g in byGroup) {
+    const list = byGroup[g].sort((a, b) => a.k - b.k);
+    if (list[0].kind === "ray") { list.forEach((ch, i) => AN.rays.push(mkRay(g, i, ch.ids.map(id => bs[id]), ch.root, ch.root.clone().addScaledVector(ch.dir, ch.len), NX))); }
+    else { const mean = new V3(); list.forEach(ch => mean.add(ch.dir)); mean.normalize();
+      AN.pecs.push({ side: list[0].side, hinge: bs[RIG.defs.findIndex(d => d.name === list[0].hinge)], subs: list.map(ch => ({ bones: ch.ids.map(id => bs[id]), fan: Math.atan2(new V3().crossVectors(mean, ch.dir).dot(NY), mean.dot(ch.dir)) })), simple: false }); }
+  }
+  AN.dorsalIdx = AN.rays.filter(r => r.group === "dorsal");
+  setupAnat();
+}
+// ---- betta: eyes (separate mesh, split per eye), operculum + jaw + dorsal/anal rays (new bones, weights taken from the nearby verts) ----
+function rigBetta(root) {
+  const OFF = (Q.get("anoff") || "").split(",");   // debug: ?anoff=eye,op,jaw,rays skips those parts
+  root.updateMatrixWorld(true);
+  const V3 = THREE.Vector3, meshes = []; root.traverse(n => { if (n.isSkinnedMesh) meshes.push(n); });
+  if (meshes.length < 1 || !meshes[0].skeleton) return;
+  meshes.sort((a, b) => b.geometry.attributes.position.count - a.geometry.attributes.position.count);
+  const body = meshes[0], eyeM = meshes[1] || null, skel0 = body.skeleton, byName = {};
+  skel0.bones.forEach((b, k) => { const m = /^(Bone\d*)_/.exec(b.name); byName[m ? m[1] : b.name] = [b, k]; });
+  const B = n => byName[n] && byName[n][0], idxOf = names => new Set(names.map(n => byName[n] && byName[n][1]).filter(v => v != null));
+  const wp = b => b.getWorldPosition(new V3()), head = B("Bone006");
+  const Mr = skel0.bones[0].matrixWorld.clone().multiply(skel0.boneInverses[0]);
+  if (!head || !B("Bone001")) return;
+  const pa = body.geometry.attributes.position, nV = pa.count, si = body.geometry.attributes.skinIndex, sw = body.geometry.attributes.skinWeight;
+  const oldW = (i, set) => { let s = 0; for (let k = 0; k < 4; k++) if (set.has(si.getComponent(i, k))) s += sw.getComponent(i, k); return s; };
+  const nb = [], opsBody = [], opsEye = [], pt = new V3();
+  // midline x = the spine bone's x
+  const xm = wp(B("Bone001")).x;
+  // --- eyes: split the eye mesh at the midline; one bone per eyeball at its bbox centre ---
+  if (eyeM && !OFF.includes("eye")) {
+    const ep = eyeM.geometry.attributes.position, bb = new THREE.Box3(), half = [new THREE.Box3(), new THREE.Box3()];
+    for (let i = 0; i < ep.count; i++) { pt.fromBufferAttribute(ep, i).applyMatrix4(Mr); bb.expandByPoint(pt); }
+    const xe = (bb.min.x + bb.max.x) / 2;
+    for (let i = 0; i < ep.count; i++) { pt.fromBufferAttribute(ep, i).applyMatrix4(Mr); half[pt.x > xe ? 0 : 1].expandByPoint(pt); }
+    [1, -1].forEach((sg, h) => { const c = half[h].getCenter(new V3()); (AN.eyeInfo = AN.eyeInfo || {})[sg] = { c: c.toArray().map(v => +v.toFixed(3)), size: half[h].getSize(new V3()).toArray().map(v => +v.toFixed(3)) }; const eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true }); nb.push(eb); AN.eyes.push({ bone: eb, side: sg });
+      opsEye.push({ bone: eb, fn: (i, p) => (p.x > xe) === (sg > 0) ? 1 : 0 }); });
+  }
+  // --- operculum: the plate the old gill bones cover; hinge = its front-upper edge ---
+  const OPB = { 1: ["Bone046", "Bone048", "Bone050"], [-1]: ["Bone047", "Bone049", "Bone051"] };
+  for (const sg of OFF.includes("op") ? [] : [1, -1]) {
+    const set = idxOf(OPB[sg]); const mn = new V3(1e9, 1e9, 1e9), mx = new V3(-1e9, -1e9, -1e9); let n = 0, xh = 0;
+    for (let i = 0; i < nV; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (sg * (pt.x - xm) > 0 && oldW(i, set) > 0.35) { mn.min(pt); mx.max(pt); n++; xh = Math.max(xh, sg * (pt.x - xm)); } }
+    if (n < 10) continue;
+    const rz = (mx.z - mn.z) / 2 * 0.85, zc = (mn.z + mx.z) / 2 + 0.1 * rz, yc = (mn.y + mx.y) / 2, ry = (mx.y - mn.y) / 2 * 0.95, hp = new V3(xm + sg * xh * 0.8, yc + ry * 0.35, mx.z);
+    const ob = mkBone("op" + (sg > 0 ? "R" : "L"), head, hp, "op", { side: sg, skipWall: true }); nb.push(ob); AN.ops.push({ bone: ob, side: sg });
+    opsBody.push({ bone: ob, fn: (i, p) => { const r = Math.hypot((p.z - zc) / rz, (p.y - yc) / ry); return ss01(1.0, 0.5, r) * ss01(0.2, 0.6, sg * (p.x - xm) / xh); } });
+    AN.opInfo = AN.opInfo || {}; AN.opInfo[sg] = { zc, yc, rz, ry, hp: hp.toArray().map(v => +v.toFixed(3)), n };
+  }
+  // --- jaw: lower jaw = the snout below the mouth line (tip → back-down slope), hinge behind and below the mouth; sizes are in eye diameters ---
+  if (!OFF.includes("jaw")) {
+    let tipY = 0, tipZ = -1e9; for (let i = 0; i < nV; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (pt.z > tipZ) { tipZ = pt.z; tipY = pt.y; } }
+    const ed = AN.eyeInfo ? AN.eyeInfo[1].size[1] : 0.24, hp = new V3(xm, tipY - 1.3 * ed, tipZ - 1.7 * ed), slope = AT("jslope", 0.55);
+    const jb = mkBone("jaw", head, hp, "jaw", { skipWall: true }); nb.push(jb); AN.jaw = { bone: jb }; AN.noseTip = [+tipZ.toFixed(3), +tipY.toFixed(3)];
+    opsBody.push({ bone: jb, fn: (i, p) => ss01(0, -0.45 * ed, p.y - (tipY - (tipZ - p.z) * slope)) * ss01(tipZ - 2.7 * ed, tipZ - 1.3 * ed, p.z) * ss01(1.2 * ed, 0.5 * ed, Math.abs(p.x - xm)) * ss01(-4.0 * ed, -3.4 * ed, p.y - tipY) });
+    AN.jawInfo = { hp: hp.toArray().map(v => +v.toFixed(3)), ed }; }
+  // --- dorsal + anal rays: replace the old coarse fin chains by a fan of new ray chains ---
+  const spineB = ["Bone001", "Bone002", "Bone003", "Bone004", "Bone005"].map(B).filter(Boolean);
+  const FINSETS = [{ g: "dorsal", up: 1, names: ["Bone018", "Bone021", "Bone022", "Bone019", "Bone023", "Bone024", "Bone020", "Bone025", "Bone026"], N: Math.round(AT("nd", 8)), nj: 3 },
+                   { g: "analB", up: -1, names: ["Bone033", "Bone035", "Bone037", "Bone034", "Bone036", "Bone038"], N: Math.round(AT("na", 6)), nj: 3 }];
+  const dead = []; AN.finInfo = {};
+  for (const FS of OFF.includes("rays") ? [] : FINSETS) {
+    const set = idxOf(FS.names), R = [];
+    for (let i = 0; i < nV; i++) { if (oldW(i, set) > 0.5) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); R.push(pt.clone()); } }
+    if (R.length < 30) continue;
+    const zs = R.map(q => q.z).sort((a, b) => a - b), zlo = zs[Math.floor(zs.length * 0.02)], zhi = zs[Math.floor(zs.length * 0.98)], dz = (zhi - zlo) / FS.N;
+    const sigma = 0.85 * dz, rays = [];
+    for (let k = 0; k < FS.N; k++) {
+      const zk = zhi - dz * (k + 0.5), V = R.filter(q => Math.abs(q.z - zk) < dz * 0.9); if (V.length < 4) continue;
+      const ys = V.map(q => q.y).sort((a, b) => a - b), yb = FS.up > 0 ? ys[Math.floor(ys.length * 0.03)] : ys[Math.floor(ys.length * 0.97)], yt = FS.up > 0 ? ys[ys.length - 1] : ys[0];
+      const top = V.filter(q => FS.up * (q.y - yb) > FS.up * (yt - yb) * 0.85), tz = top.reduce((s, q) => s + q.z, 0) / Math.max(1, top.length);
+      rays.push({ k, base: new V3(xm, yb, zk), tip: new V3(xm, yt, tz) });
+    }
+    AN.finInfo[FS.g] = { zlo, zhi, n: rays.length, nVerts: R.length };
+    const toOps = [], rayRecs = [];
+    rays.forEach((r, ri) => {
+      let par = spineB[0], bd = 1e9; for (const sb of spineB) { const dd = Math.abs(wp(sb).z - r.base.z); if (dd < bd) { bd = dd; par = sb; } }
+      const bs = [], d = r.tip.clone().sub(r.base), len = d.length(); d.divideScalar(len);
+      for (let j = 0; j < FS.nj; j++) { const b = mkBone(FS.g + "_" + ri + "_" + j, j ? bs[j - 1] : par, r.base.clone().addScaledVector(d, len * j / FS.nj), "ray", { rigTw: null }); bs.push(b); nb.push(b); }
+      rayRecs.push(mkRay(FS.g, ri, bs, r.base, r.tip, new V3(1, 0, 0)));
+      bs.forEach((b, j) => toOps.push({ bone: b, fn: (i, p) => { const [g, t] = gaussRay(p, r.base, d, len, sigma), u = t * FS.nj, i0 = Math.min(Math.floor(u), FS.nj - 1), f = u - i0; const wj = j === i0 ? (i0 >= FS.nj - 1 ? 1 : 1 - f) : (j === i0 + 1 ? f : 0); return g * wj; } }));
+    });
+    opsBody.push({ from: set, to: toOps }); for (const n of FS.names) if (B(n)) { B(n).userData.dead = true; dead.push(B(n)); }
+    AN.rays.push(...rayRecs);
+  }
+  reskin(eyeM ? [body, eyeM] : [body], nb, m => m === body ? opsBody : opsEye); if (Q.get("anatvis") === "1") anatVis(eyeM ? [body, eyeM] : [body]); finishAnat(nb);
+  // --- pectoral fins: reuse the existing bones (root → mid → 2 tips), driven by the stroke instead of the clip/drag springs ---
+  for (const [sg, nm] of [[1, ["Bone010", "Bone012", "Bone014", "Bone016"]], [-1, ["Bone011", "Bone013", "Bone015", "Bone017"]]]) {
+    const bb = nm.map(B); if (bb.some(v => !v)) continue; bb.forEach(b => { b.userData.own = true; AN.own.push(b); });
+    bb.forEach(b => { const q = new THREE.Quaternion(), pq = new THREE.Quaternion(); b.getWorldQuaternion(q); b.userData.ax = AXV.map(v => v.clone().applyQuaternion(q.clone().invert())); });
+    AN.pecs.push({ side: sg, hinge: bb[0], subs: [{ bones: [bb[1], bb[2]], fan: 0.35 }, { bones: [bb[3]], fan: -0.35, from: bb[1] }], simple: true, parentOf: [[bb[1], bb[0]], [bb[2], bb[1]], [bb[3], bb[1]]] });
+  }
+  AN.dead = dead; setupAnat();
+}
+function setupAnat() {
+  AN.ready = true;
+  AN.S = { eff: 0.2, bph: Math.random() * 6, pph: 0, brake: 0, dec: 0, spd: 0.9, vp: new THREE.Vector3(0, 0, 1), anti: 0,
+    eye: { S: 0, from: 0, to: 0, t0: -1, dur: 0.05, next: 1.0, vor: 0, cool: 0, st: [{ x: 0, v: 0, pend: 0 }, { x: 0, v: 0, pend: 0 }], n: 0, log: [] }, rec: [] };
+  for (const pc of AN.pecs) { pc.ph = 0; pc.a = new Map(); pc.cmd = { sweep: 0, sig: 1 }; }
+}
+const relAngAxis = (b, a) => { const r = b.userData.q0.clone().invert().multiply(b.quaternion); return 2 * Math.atan2(r.x * a.x + r.y * a.y + r.z * a.z, r.w); };
+const relAng = (b, axI) => { const q0 = b.userData.q0, q = b.quaternion, r = q0.clone().invert().multiply(q), a = b.userData.ax[axI]; return 2 * Math.atan2(r.x * a.x + r.y * a.y + r.z * a.z, r.w); };   // actual rotation about root axis axI (probe)
+const rotAx = (b, i, a) => { if (a !== 0) b.quaternion.multiply(_qa.setFromAxisAngle(b.userData.ax[i], a)); };
+const wrnd = (t, i) => Math.sin(t * 13.1 + 2.3 * i) * 0.5 + Math.sin(t * 7.7 + 4.1 * i) * 0.3 + Math.sin(t * 23.3 + 1.1 * i) * 0.2;
+let INTENT = 0;
+function anatStep(dt, t) {
+  if (!AN.ready || !(dt > 0)) return;
+  if (POSE) { for (const b of AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } for (const b of AN.own) b.quaternion.copy(b.userData.q0); if (AN.mouth) mouthPose(); return; }
+  const S = AN.S, E = S.eye; t = S.ts = (S.ts || 0) + dt;   // own sim clock (frame-rate independent: dt is capped, so slow machines slow the fish, not the clock)
+  for (const b of AN.bones) b.quaternion.copy(b.userData.q0);
+  for (const b of AN.own) b.quaternion.copy(b.userData.q0);
+  const eff0 = DISPLAY ? clamp(0.85 * beat + 0.3 * Math.max(0, speed - 0.7), 0, 1) : 0.15; S.eff += (eff0 - S.eff) * (1 - Math.exp(-dt * 0.9));
+  const hr = DISPLAY ? Math.atan2(_va.crossVectors(S.vp, V).dot(UPV), S.vp.dot(V)) / dt : 0; S.vp.copy(V); S.hr = hr;
+  const dv = DISPLAY ? (speed - S.spd) / dt : 0; S.spd = speed; S.dec += (-dv - S.dec) * (1 - Math.exp(-dt * 6));
+  // ---------------- eyes ----------------
+  const EM = AT("eyemax", 15) * D2R, EK = AT("eyek", 1);
+  const sacc = (to, kind) => { E.from = E.S; E.to = clamp(to, -EM, EM); E.t0 = t; E.dur = 0.03 + 0.05 * Math.min(1, Math.abs(E.to - E.from) / (25 * D2R)) * (0.7 + 0.6 * Math.random()); E.n++; E.cur = { t, kind, amp: (E.to - E.from) / D2R, dur: E.dur }; E.log.push(E.cur); if (E.log.length > 400) E.log.shift(); };
+  if (t >= E.next) {
+    const roomP = EM - E.S, roomN = EM + E.S, sgn = Math.random() < roomP / (roomP + roomN) ? 1 : -1, room = sgn > 0 ? roomP : roomN, amp = Math.min(room, (2 + 23 * Math.pow(Math.random(), 2)) * D2R);
+    sacc(E.S + (amp < 2 * D2R ? -sgn * 2 * D2R * (1 + Math.random()) : sgn * amp), "rand"); E.next = t + (1 + 2 * Math.random()) * EK;
+  }
+  if (DISPLAY && Math.abs(INTENT) > 0.4 && t > E.cool && E.S * Math.sign(INTENT) < 0.5 * EM) { sacc(Math.sign(INTENT) * (7 + 7 * Math.random()) * D2R, "turn"); E.cool = t + 2.2; E.next = Math.max(E.next, t + 0.9); E.cur.intent = INTENT; }
+  if (E.t0 >= 0) { const u = (t - E.t0) / E.dur; if (u < 1) E.S = E.from + (E.to - E.from) * (1 - Math.pow(1 - u, 3)); else { if (E.S !== E.to) { E.S = E.to; for (const s of E.st) s.x += (E.to - E.from) * (Math.random() * 0.22 - 0.06); } } }
+  E.vor += -AT("vor", 0.3) * hr * dt; E.vor *= Math.exp(-dt / 0.7); E.vor = clamp(E.vor, -0.5 * EM, 0.5 * EM);
+  for (const s of E.st) { for (let n = Math.ceil(dt / 0.004), h = dt / n; n > 0; n--) { s.v += (-1500 * s.x - 2 * 0.45 * 38.7 * s.v) * h; s.x += s.v * h; } }
+  S.eyeAng = [];
+  AN.eyes.forEach((e, k) => { const a = clamp(E.S + E.vor, -EM, EM) + E.st[k].x; S.eyeAng.push(a); rotAx(e.bone, 1, a); });
+  // ---------------- gills + jaw ----------------
+  const calm = AT("gillrate", 70), hi = AT("gillmax", 120), rate = (calm + (hi - calm) * S.eff) / 60; S.bph += dt * rate * 2 * Math.PI; S.rate = rate * 60;
+  const mouth = 0.5 - 0.5 * Math.cos(S.bph), opn = 0.5 - 0.5 * Math.cos(S.bph - AT("gilllag", 0.4) * 2 * Math.PI);
+  const flare = AT("gill", GOLD ? 6 : 7) * D2R * (1 + 0.35 * S.eff);
+  S.opAng = opn * flare; S.jawAng = mouth * AT("jaw", GOLD ? 8 : 7) * D2R;
+  if (AN.mouth) mouthStep(S, dt, t);
+  else { for (const o of AN.ops) rotAx(o.bone, 1, -o.side * S.opAng);
+  if (AN.jaw) rotAx(AN.jaw.bone, 0, S.jawAng); }
+  // ---------------- pectoral fins ----------------
+  const f0 = AT("pecf", 1.2), f1 = AT("pecfmax", 2.6), fHz = f0 + (f1 - f0) * clamp(S.eff * 1.1, 0, 1); S.pph += dt * 2 * Math.PI * fHz; S.pecHz = fHz;
+  const bri = ss01(0.35, 1.0, S.dec); S.brake = Math.max(bri, S.brake * Math.exp(-dt / 0.8));
+  const A_S = AT("pec", GOLD ? 16 : 20) * D2R, FOLD = AT("pecfold", 0.5);
+  for (const pc of AN.pecs) {
+    const sg = pc.side, ph = S.pph + (sg > 0 ? Math.PI * (1 - S.brake) : 0), u = ((ph / (2 * Math.PI)) % 1 + 1) % 1;
+    let x, sig; if (u < 0.45) { x = -Math.cos(Math.PI * u / 0.45); sig = 1; } else { const q = (u - 0.45) / 0.55; x = Math.cos(Math.PI * q); sig = 1 - FOLD * Math.pow(Math.sin(Math.PI * q), 0.7); }
+    const inner = DISPLAY ? ss01(0.25, 0.8, sg * steer) : 0, outerK = DISPLAY ? ss01(0.25, 0.8, -sg * steer) : 0;   // turning toward +x: the +x side fin is the inner one
+    const amp = (1 - 0.88 * inner) * (1 + 0.25 * outerK);
+    x = x * amp; x += (-0.45 - x) * inner; x += (-1.15 - x) * S.brake; sig += (1 - sig) * Math.max(inner, S.brake);
+    const sweep = sg * A_S * x; pc.cmd.sweep = sweep; pc.cmd.sig = sig; pc.cmd.x = x;
+    rotAx(pc.hinge, 1, sweep);
+    // outer rays trail: each bone follows its parent's absolute sweep angle through a first-order lag (tau grows toward the edge)
+    const absA = new Map(); absA.set(pc.hinge, sweep);
+    pc.subs.forEach(sub => { let parA = sub.from ? (pc.a.get(sub.from) != null ? pc.a.get(sub.from) : sweep) : sweep; sub.bones.forEach((b, j) => {
+      let a = pc.a.get(b); if (a == null) a = parA; const tau = 0.035 + 0.03 * j; a += (parA - a) * (1 - Math.exp(-dt / tau)); pc.a.set(b, a);
+      let rel = a - parA; if (j === 0) rel += (sig - 1) * sub.fan * (pc.simple ? 0.5 : 1);
+      rotAx(b, pc.simple ? 1 : 1, rel); parA = a; }); });
+    pc.measSig = sig;
+  }
+  // ---------------- dorsal / anal ray waves ----------------
+  const DPH = AT("dph", 30) * D2R, DWA = AT("dwa", 0.16), DG = AT("dg", 0.18), DK = AT("dkw", 22), DZ = AT("dz", 0.4), DFL = AT("dfl", 0.05), CAP = AT("dcap", 0.6), CPL = AT("dcouple", 8);
+  const wph = DISPLAY ? phase : t * 4.5, drive = DISPLAY ? 0.3 + 0.7 * beat : 0.6, Lw = BODY_L * ZOOM, spd1 = DISPLAY ? clamp(speed, 0, 2) : 0.5;
+  const groups = {}; for (const r of AN.rays) (groups[r.group] || (groups[r.group] = [])).push(r);
+  for (const g in groups) {
+    const list = groups[g], nj = list[0].bones.length;
+    for (let ri = 0; ri < list.length; ri++) {
+      const r = list[ri], b0 = r.bones[0];
+      b0.parent.getWorldQuaternion(_qw).multiply(b0.userData.q0);
+      _ax.copy(r.n).applyQuaternion(_qw);                                     // sheet normal, world
+      let sumTh = 0;
+      for (let j = 0; j < nj; j++) {
+        const bj = r.bones[j], tipB = r.bones[j + 1]; if (tipB) tipB.getWorldPosition(_ta); else { bj.getWorldPosition(_ta); bj.parent.getWorldPosition(_tb); _ta.multiplyScalar(2).sub(_tb); }
+        let un = 0; if (r.prev[j]) un = _tb.copy(_ta).sub(r.prev[j]).divideScalar(dt * Lw).dot(_ax); (r.prev[j] || (r.prev[j] = new THREE.Vector3())).copy(_ta);
+        const parTh = j ? r.th[j - 1] : 0;
+        const AJ = j === 0 ? 0.35 : (j === 1 ? 0.85 : 1), wave = DWA * AJ * drive * Math.sin(wph - ri * DPH - j * 0.45 + (g.startsWith("anal") ? 0.6 : 0)) + parTh * 0.4;   // root joint barely moves (it sits on the skin seam); the wave grows toward the free edge, each joint lagging its parent
+        const flut = j ? DFL * (0.25 + spd1) * (j / (nj - 1)) * wrnd(t + 0.37 * ri, ri * 3 + j) : 0;
+        r.tgt = (r.tgt || []); r.tgt[j] = wave - DG * clamp(un, -1.5, 1.5) * (j ? 1 + 0.3 * j : 0.4) + flut - (j === 0 ? 0.04 * (DISPLAY ? steer : 0) : 0);
+        sumTh += Math.abs(r.th[j]);
+      }
+    }
+    // neighbour coupling per joint level (ray i pulled toward the mean of its two neighbours) so the sheet cannot fold across itself
+    const kc = 1 - Math.exp(-dt * CPL);
+    for (let j = 0; j < nj; j++) { for (let ri = 0; ri < list.length; ri++) { const nbm = [list[ri - 1], list[ri + 1]].filter(Boolean); if (!nbm.length) continue; const m = nbm.reduce((s, q) => s + q.tgt[j], 0) / nbm.length; list[ri].tgt[j] += (m - list[ri].tgt[j]) * 0.35; } }
+    for (const r of list) {
+      for (let j = 0; j < nj; j++) {
+        const w0 = DK * Math.pow(0.71, j), z = Math.max(0.18, 0.45 - 0.08 * j);   // ω falls ×0.71 per joint (stiffness ×0.5), damping ratio too
+        for (let n = Math.ceil(dt / 0.004), h = dt / n; n > 0; n--) { r.om[j] += (-w0 * w0 * (r.th[j] - r.tgt[j]) - 2 * z * w0 * r.om[j]) * h; r.th[j] += r.om[j] * h; }
+      }
+      let cum = 0; for (let j = 0; j < nj; j++) cum += Math.abs(r.th[j]); if (cum > CAP) { const k = CAP / cum; for (let j = 0; j < nj; j++) { r.th[j] *= k; r.om[j] *= k; } }
+      for (let j = 0; j < nj; j++) r.bones[j].quaternion.multiply(_qa.setFromAxisAngle(r.a, r.th[j]));
+    }
+  }
+  if (window.__anatRec) {   // veil probes: lateral offset of the tail base vs the free tips (body frame), tip span, along-track acceleration
+    if (!AN.veilSet) { AN.veilSet = { base: RIG ? RIG.bs[6] : (bones.find(b => /^Bone005_/.test(b.name)) || null), tips: bones.filter(b => !b.children.some(c => c.isBone) && (b.userData.tw || 0) > 0.72 && !b.userData.own) }; }
+    const V0 = AN.veilSet; if (V0.base) { outer.updateMatrixWorld(true); const lat = b => outer.worldToLocal(tipOf(b, new THREE.Vector3())), tp = V0.tips.map(lat), bp = outer.worldToLocal(V0.base.getWorldPosition(new THREE.Vector3()));
+      let span = 0, n = 0; for (let i = 0; i < tp.length; i++) for (let j = i + 1; j < tp.length; j++) { span += tp[i].distanceTo(tp[j]); n++; }
+      S.veil = { vb: bp.x, vt: tp.reduce((q, v) => q + v.x, 0) / Math.max(1, tp.length), vs: span / Math.max(1, n) / (BODY_L * ZOOM), acc: VEIL.acc }; } }
+  S.nanCheck = AN.bones.every(b => Number.isFinite(b.quaternion.x + b.quaternion.w));
+  if (window.__anatRec) { S.rec.push({ t, eye: S.eyeAng ? S.eyeAng.map(a => a / D2R) : [], eS: E.S / D2R, op: S.opAng / D2R, jaw: S.jawAng / D2R, mth: AN.mouth ? [AN.mouth.cur.jaw, AN.mouth.cur.premax, AN.mouth.cur.op, AN.mouth.cur.br, AN.mouth.evn] : null, rate: S.rate, hr, brake: S.brake, steer, intent: INTENT,
+    pec: AN.pecs.map(pc => [pc.side, pc.cmd.sweep / D2R, pc.cmd.sig]), ray: AN.rays.map(r => r.th.slice()), veil: S.veil || null }); if (S.rec.length > 3000) S.rec.shift(); }
+}
+if (Q.get("debug") === "1") {
+  window.__anat = () => AN.S && ({ eyes: AN.eyes.length, ops: AN.ops.length, jaw: !!AN.jaw, pecs: AN.pecs.length, rays: AN.rays.length, groups: [...new Set(AN.rays.map(r => r.group))], opInfo: AN.opInfo, jawInfo: AN.jawInfo, eyeInfo: AN.eyeInfo, noseTip: AN.noseTip, finInfo: AN.finInfo, saccades: AN.S.eye.n, S: { eff: AN.S.eff, rate: AN.S.rate, pecHz: AN.S.pecHz, brake: AN.S.brake } });
+  window.__anatRecOn = () => { window.__anatRec = true; AN.S.rec.length = 0; };
+  window.__anatRecGet = () => AN.S.rec;
+  window.__anatLog = () => AN.S.eye.log;
+  window.__anatMeas = () => ({ eye: AN.eyes.map(e => relAng(e.bone, 1) / D2R), op: AN.ops.map(o => relAng(o.bone, 1) / D2R), jaw: AN.jaw ? relAng(AN.jaw.bone, 0) / D2R : null, pec: AN.pecs.map(pc => relAng(pc.hinge, 1) / D2R),
+    ray: AN.rays.map(r => ({ g: r.group, k: r.k, th: r.bones.map(b => relAngAxis(b, r.a)) })), nan: !AN.S.nanCheck });
+}
+
+
+let SPINE_SET = null;
+function stretchB(sm, rest) {   // debug (non-rigged models): edge stretch vs rest by dominant-bone class: body (spine/head), tail (tw>0.72), fins (rays / pectorals / other fin bones)
+  sm.updateMatrixWorld(true); sm.skeleton.update();
+  const geo = sm.geometry, ix = geo.index.array, nV = geo.attributes.position.count, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, bn = sm.skeleton.bones, cls = new Uint8Array(nV), v = new THREE.Vector3(), cur = new Float32Array(nV * 3);
+  for (let i = 0; i < nV; i++) { let bk = 0, bw = -1; for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > bw) { bw = sw.getComponent(i, k); bk = k; } const b = bn[si.getComponent(i, bk)], u = b.userData;
+    cls[i] = (u.role === "ray" || u.own || u.role === "pec") ? 2 : (SPINE_SET && SPINE_SET.has(b) || (u.tw || 0) < 0.19 ? 0 : ((u.tw || 0) > 0.72 ? 1 : 2));
+    sm.getVertexPosition(i, v); cur.set([v.x, v.y, v.z], i * 3); }
+  const R = [[], [], []], seen = new Set();
+  for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) { const a = ix[t + k], b = ix[t + (k + 1) % 3], key = Math.min(a, b) * nV + Math.max(a, b); if (seen.has(key)) continue; seen.add(key);
+    const rl = Math.hypot(rest[a * 3] - rest[b * 3], rest[a * 3 + 1] - rest[b * 3 + 1], rest[a * 3 + 2] - rest[b * 3 + 2]); if (rl < 0.01) continue;
+    R[Math.max(cls[a], cls[b])].push(Math.hypot(cur[a * 3] - cur[b * 3], cur[a * 3 + 1] - cur[b * 3 + 1], cur[a * 3 + 2] - cur[b * 3 + 2]) / rl); }
+  const st = a => { a.sort((x, y) => x - y); const n = a.length; return n ? { n, max: +a[n - 1].toFixed(2), p999: +a[Math.floor(n * 0.999)].toFixed(2), min: +a[0].toFixed(2) } : null; };
+  return { body: st(R[0]), tail: st(R[1]), fins: st(R[2]), rollDeg: 0, minAdjRatio: 1, edgeOn: 0, flipped: 0 };
+}
+
 // debug probe (?debug=1): where the head points vs where the fish moves — 3D and on screen
+if (Q.get("debug") === "1") { window.__outer = outer; window.__P = P; window.__V = V; }
 if (Q.get("debug") === "1") window.__bones = () => bones.map(b => [b.name.replace('_Armature',''), +(b.userData.tw || 0).toFixed(2), b.children.some(c => c.isBone) ? '' : 'leaf']);
 if (Q.get("debug") === "1") window.__fins = () => FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), +f.th.length().toFixed(2)]).sort((a,b)=>b[2]-a[2]).slice(0,6);
 if (Q.get("debug") === "1") window.__pop = () => { const o = { ...POP, frameMs: +(lastDt * 1000).toFixed(1), body: +(BODY_L * ZOOM).toFixed(2) }; for (const k in POP) POP[k] = 0; return o; };
@@ -429,6 +1069,119 @@ if (Q.get("debug") === "1") window.__dbg = () => {
            tailLat: +tl.clone().sub(P).dot(LAT.clone().crossVectors(UPV, V).normalize()).toFixed(3) };
 };
 
+
+if (Q.get("debug") === "1") {
+  // rig probes: __stretch() = max/p99.9 edge stretch vs rest (body / fins / tail), __ts() = tail lateral time series, __rig() = layout
+  const TS = []; window.__ts = () => TS; window.__cam = cam; window.__ctl = controls;
+  // mouth/gill test hooks (models carrying geometry.userData.mouthRig): __pose(on) freezes the fish at rest; __view(name) sets the test camera (root frame, fov 30, distance 2.33*HL)
+  window.__pose = on => { POSE = !!on; return POSE; };
+  const poseApply = () => { for (const b of AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } if (AN.mouth) mouthPose(); RIG.sm.updateMatrixWorld(true); RIG.sm.skeleton.update(); };
+  window.__forceMouth = o => { const M = AN.mouth; if (!M) return null; M.force = o ? { jaw: o.jaw || 0, premax: o.premax || 0, op: o.op || 0, br: o.br || 0 } : null; poseApply(); return M.force; };
+  window.__mouthEvent = (k, u) => mouthEvent(k, u);
+  window.__events = on => { const M = AN.mouth; if (!M) return null; M.eventsOn = !!on; if (!on) M.act = null; return M.eventsOn; };
+  window.__event = name => { const M = AN.mouth; if (!M) return null; M.act = { kind: name, t0: AN.S.ts || 0, n: name === "prot" ? 3 : 1 }; return name; };
+  window.__seamGap = () => { const mr = RIG.sm.geometry.userData.mouthRig, sm = RIG.sm, a = new THREE.Vector3(), b = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); let m = 0, tp = mr.twinPairs;
+    for (let k = 0; k < tp.length; k += 2) { sm.getVertexPosition(tp[k], a); sm.getVertexPosition(tp[k + 1], b); m = Math.max(m, a.distanceTo(b)); } return m; };
+  window.__mouth = () => {
+    const M = AN.mouth, sm = RIG.sm, mr = sm.geometry.userData.mouthRig; if (!M) return null; sm.updateMatrixWorld(true); sm.skeleton.update();
+    const gp = i => sm.getVertexPosition(i, new THREE.Vector3()), lo = mr.lipLo, up = mr.lipUpR2R, D = mr.d;
+    const e2 = new THREE.Vector3(0, 1, 0).cross(new THREE.Vector3(1, 0, 0)).set(0, 0, 0); { const d = new THREE.Vector3(...D), x = new THREE.Vector3(1, 0, 0); e2.crossVectors(d, x).normalize(); }
+    const poly = up.concat(lo.slice().reverse().slice(1, -1)).map(i => { const p = gp(i); return [p.x, p.dot(e2)]; });
+    let area = 0; for (let k = 0; k < poly.length; k++) { const a = poly[k], b = poly[(k + 1) % poly.length]; area += a[0] * b[1] - b[0] * a[1]; } area = Math.abs(area) / 2;
+    const jawDeg = relAng(M.jaw, 0) / D2R, midGap = gp(mr.c0Up).distanceTo(gp(mr.c0Lo)), prem = M.premax.position.clone().sub(M.premax.userData.p0).dot(M.dloc);
+    return { jawDeg, premax: prem, opDeg: M.op.map(b => relAng(b, 1) / D2R), brDeg: M.br.map(b => relAng(b, 2) / D2R), maxDeg: M.mx.map(b => relAng(b, 0) / D2R), midGap, predGap: 2 * mr.L * Math.sin(jawDeg * D2R / 2), L: mr.L, W: mr.W, area, areaPred: 0.45 * mr.W * midGap };
+  };
+  // T7: per-edge |ratio-1| by class from _part/_wgt (edge class = its less-rigid endpoint), plus flipped class-0 triangles
+  window.__stretchMouth = () => {
+    const sm = RIG.sm, g = sm.geometry, mr = g.userData.mouthRig, pt = g.attributes._part, wg = g.attributes._wgt, pa = g.attributes.position, ix = g.index.array, nV = pa.count, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bn = sm.skeleton.bones;
+    sm.updateMatrixWorld(true); sm.skeleton.update();
+    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
+    const TH = { hyoid: 0.35, cheek: 0.55, rostral: 0.55, rictus: 0.55, band: 0.60 };
+    const cls = new Array(nV);
+    for (let i = 0; i < nV; i++) {
+      const p0 = pt.getX(i), w0 = wg.getX(i), w1 = wg.getY(i), sc = pt.getZ(i); let eyeW = 0; for (let k = 0; k < 4; k++) if (bn[si.getComponent(i, k)].userData.role === "eye") eyeW += sw.getComponent(i, k);
+      let c; if (sc !== 0) c = "int"; else if (w0 === 0 && w1 === 0) c = (pa.getZ(i) > 0.5 && eyeW === 0) ? "other" : "skip"; else if (w0 >= 1 - 1e-6) c = "rigid";
+      else if (p0 === 2) c = pa.getY(i) < mr.J[1] ? "hyoid" : "cheek"; else if (p0 === 1) c = "rostral"; else if (p0 === 3 || p0 === 4) c = "rictus"; else c = "band";
+      cls[i] = c; }
+    let PBL = null; const R = {}, add = (c, r) => { (R[c] || (R[c] = [])).push(r); }, seen = new Set();
+    for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = ix[t + k], b = ix[t + (k + 1) % 3], key = Math.min(a, b) * nV + Math.max(a, b); if (seen.has(key)) continue; seen.add(key);
+      const ca = cls[a], cb = cls[b]; if (ca === "int" || cb === "int" || ca === "skip" || cb === "skip") continue;
+      const rl = Math.hypot(pa.getX(a) - pa.getX(b), pa.getY(a) - pa.getY(b), pa.getZ(a) - pa.getZ(b)); if (rl < 1e-5) continue;
+      const cl = Math.hypot(cur[a * 3] - cur[b * 3], cur[a * 3 + 1] - cur[b * 3 + 1], cur[a * 3 + 2] - cur[b * 3 + 2]);
+      let c; if (ca === "rigid" && cb === "rigid") c = "rigid"; else if (ca === "other" && cb === "other") c = "other";
+      else { const bl = [ca, cb].filter(x => TH[x] != null); c = bl.length === 0 ? "rigid-other" : bl.length === 1 ? bl[0] : (TH[bl[0]] >= TH[bl[1]] ? bl[0] : bl[1]); }
+      add(c, Math.abs(cl / rl - 1)); if (c === "rigid-other") (PBL = PBL || []).push([+pa.getX(a).toFixed(3), +pa.getY(a).toFixed(3), +pa.getZ(a).toFixed(3), +(cl / rl - 1).toFixed(3)]); }
+    const out = {}; for (const c in R) { const a = R[c].sort((x, y) => x - y); out[c] = { n: a.length, max: +a[a.length - 1].toFixed(4), p99: +a[Math.floor(a.length * 0.99)].toFixed(4) }; }
+    // flipped triangles on class-0 surface
+    let FL = null, flip = 0, n0 = 0; const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3(), N1 = new THREE.Vector3(), N2 = new THREE.Vector3();
+    for (let t = 0; t < ix.length; t += 3) { const a = ix[t], b = ix[t + 1], c = ix[t + 2]; if (pt.getZ(a) || pt.getZ(b) || pt.getZ(c)) continue; n0++;
+      A.fromBufferAttribute(pa, a); B_.fromBufferAttribute(pa, b).sub(A); C.fromBufferAttribute(pa, c).sub(A); N1.crossVectors(B_, C);
+      A.fromArray(cur, a * 3); B_.fromArray(cur, b * 3).sub(A); C.fromArray(cur, c * 3).sub(A); N2.crossVectors(B_, C); if (N1.dot(N2) <= 0 && N1.lengthSq() > 1e-14) { flip++; (FL = FL || []).push([a, b, c].map(q => [+pa.getX(q).toFixed(3), +pa.getY(q).toFixed(3), +pa.getZ(q).toFixed(3), pt.getX(q), +wg.getX(q).toFixed(2)])); } }
+    out.flipped = flip; out.tris0 = n0; out.pbLoc = PBL; out.flipLoc = FL; return out;
+  };
+  window.__view = name => {
+    const mr = RIG && RIG.sm.geometry.userData.mouthRig, root = window.__root; if (!mr || !root) return null;
+    const V3 = THREE.Vector3, v = a => new V3(...a), S = v(mr.S), d = v(mr.d), C0 = v(mr.C0), dist = 2.33 * mr.HL, X = new V3(1, 0, 0), D = Math.PI / 180;
+    let pos, tgt, up = new V3(0, 1, 0);
+    const frontPos = S.clone().addScaledVector(d, dist);
+    const m = /^(front|frontLow|latR|latL|rearObR|rearObL|top)$/.exec(name); if (!m) return null;
+    if (name === "front") { tgt = C0; pos = frontPos; }
+    else if (name === "frontLow") { tgt = C0; pos = tgt.clone().add(frontPos.clone().sub(tgt).applyAxisAngle(X, 25 * D)); }
+    else if (name === "latR" || name === "latL") { tgt = new V3(0, -0.05, 0.75); pos = tgt.clone().add(new V3(name === "latR" ? dist : -dist, 0, 0)); }
+    else if (name === "top") { tgt = new V3(0, -0.05, 0.75); pos = tgt.clone().add(new V3(0, dist, 0)); up = new V3(0, 0, 1); }
+    else { const sg = name === "rearObR" ? 1 : -1; tgt = v(mr.Grear[sg > 0 ? "R" : "L"]); const c10 = Math.cos(10 * D), s10 = Math.sin(10 * D), c35 = Math.cos(35 * D), s35 = Math.sin(35 * D);
+      pos = tgt.clone().add(new V3(sg * c35 * c10, s10, -s35 * c10).multiplyScalar(dist)); }
+    root.updateWorldMatrix(true, false);
+    const wp = root.localToWorld(pos.clone()), wt = root.localToWorld(tgt.clone());
+    cam.fov = 30; cam.near = 0.01; cam.updateProjectionMatrix(); cam.position.copy(wp); cam.up.copy(up.transformDirection(root.matrixWorld)); cam.lookAt(wt); controls.target.copy(wt); controls.update();
+    return { pos: wp.toArray(), tgt: wt.toArray() };
+  };
+  window.__turn = (x, y, z) => { TGT.set(x, y, z); wallTgt = false; nextPick = performance.now() / 1000 + 4; };   // force a C-turn: new swim target
+  let EDG = null; const _cur = [];
+  window.__stretch = () => {
+    if (!RIG) return null;
+    const geo = RIG.sm.geometry, pa = geo.attributes.position, ix = geo.index.array, nV = pa.count;
+    if (!EDG) { const set = new Set(), e = []; for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) { const a = ix[t + k], b = ix[t + (k + 1) % 3], lo = Math.min(a, b), hi = Math.max(a, b), key = lo * nV + hi; if (!set.has(key)) { set.add(key); e.push(lo, hi); } } EDG = Uint32Array.from(e); }
+    RIG.sm.updateMatrixWorld(true); RIG.sm.skeleton.update();
+    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { RIG.sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
+    let WORST; window.__worst = []; const R = [[], [], []], reg = RIG.region;   // body / tail / fin
+    for (let k = 0; k < EDG.length; k += 2) {
+      const a = EDG[k], b = EDG[k + 1], rl = Math.hypot(pa.getX(a) - pa.getX(b), pa.getY(a) - pa.getY(b), pa.getZ(a) - pa.getZ(b)); if (rl < 0.015) continue;
+      const cl = Math.hypot(cur[a * 3] - cur[b * 3], cur[a * 3 + 1] - cur[b * 3 + 1], cur[a * 3 + 2] - cur[b * 3 + 2]), r = Math.max(reg[a], reg[b]);
+      R[r === 0 ? 0 : r === 1 ? 1 : 2].push(cl / rl);
+      if (cl / rl > 1.8 || cl / rl < 0.4) (WORST = window.__worst || (window.__worst = [])).push([cl / rl, r, +pa.getX(a).toFixed(2), +pa.getY(a).toFixed(2), +pa.getZ(a).toFixed(2), RIG.sm.skeleton.bones[geo.attributes.skinIndex.getX(a)].name, RIG.sm.skeleton.bones[geo.attributes.skinIndex.getX(b)].name]);
+    }
+    const st = a => { a.sort((x, y) => x - y); const n = a.length; return n ? { n, max: +a[n - 1].toFixed(2), p999: +a[Math.floor(n * 0.999)].toFixed(2), min: +a[0].toFixed(2) } : null; };
+    // tail-sheet quality: roll (twist about the chain axis, cumulative per chain), min adjacent-chain angle vs rest (crossing), edge-on + flipped tail triangles
+    if (!RIG.tt) { const tt = []; for (let t = 0; t < ix.length; t += 3) if (reg[ix[t]] === 1 && reg[ix[t + 1]] === 1 && reg[ix[t + 2]] === 1) tt.push(t); RIG.tt = tt;
+      RIG.rn = new Float32Array(tt.length * 3); const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3();
+      tt.forEach((t, i) => { A.fromBufferAttribute(pa, ix[t]); B_.fromBufferAttribute(pa, ix[t + 1]); C.fromBufferAttribute(pa, ix[t + 2]); B_.sub(A); C.sub(A); B_.cross(C).normalize(); RIG.rn.set([B_.x, B_.y, B_.z], i * 3); }); }
+    let edgeOn = 0, flip = 0; { const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3(), W = new THREE.Vector3();
+      RIG.tt.forEach((t, i) => { const [a_, b_, c_] = [ix[t], ix[t + 1], ix[t + 2]]; A.fromArray(cur, a_ * 3); B_.fromArray(cur, b_ * 3); C.fromArray(cur, c_ * 3); W.copy(A).add(B_).add(C).divideScalar(3);
+        B_.sub(A); C.sub(A); N.copy(B_).cross(C).normalize(); if (N.x * RIG.rn[i * 3] + N.y * RIG.rn[i * 3 + 1] + N.z * RIG.rn[i * 3 + 2] < 0) flip++;
+        N.transformDirection(RIG.sm.matrixWorld); W.applyMatrix4(RIG.sm.matrixWorld); W.sub(cam.position).normalize(); if (Math.abs(N.dot(W)) < 0.15) edgeOn++; }); }
+    let roll = 0; for (const ch of RIG.chains) { if (ch.kind !== "tail") continue; let cum = 0; for (const id of ch.ids) { const q = RIG.bs[id].quaternion; cum += 2 * Math.atan2(q.x * ch.dir.x + q.y * ch.dir.y + q.z * ch.dir.z, q.w); } roll = Math.max(roll, Math.abs(cum) * 180 / Math.PI); }
+    let minAng = 9, minRatio = 9; { const o = new THREE.Vector3(), pa_ = new THREE.Vector3(), pb_ = new THREE.Vector3(); RIG.bs[6].getWorldPosition(o);
+      for (const c in NB) for (const n of NB[c]) { if (+n < +c) continue; const A = RIG.chains[c], Bc = RIG.chains[n];
+        for (let k = 1; k < A.n; k++) { RIG.bs[A.ids[k]].getWorldPosition(pa_).sub(o); RIG.bs[Bc.ids[k]].getWorldPosition(pb_).sub(o);
+          const cur_ = pa_.angleTo(pb_), rest = RIG.defs[A.ids[k]].p.clone().sub(RIG.defs[6].p).angleTo(RIG.defs[Bc.ids[k]].p.clone().sub(RIG.defs[6].p)); minAng = Math.min(minAng, cur_); minRatio = Math.min(minRatio, cur_ / rest); } } }
+    const nT = RIG.tt.length;
+    return { body: st(R[0]), tail: st(R[1]), fins: st(R[2]), rollDeg: +roll.toFixed(1), minAdjDeg: +(minAng * 180 / Math.PI).toFixed(1), minAdjRatio: +minRatio.toFixed(2), edgeOn: +(edgeOn / nT).toFixed(3), flipped: +(flip / nT).toFixed(3), yaw: +yawRate.toFixed(2), steer: +steer.toFixed(2) };
+  };
+  window.__chainInfo = () => RIG.chains.map(c => [c.name, c.dir.toArray().map(v => +v.toFixed(2)), c.nrm.toArray().map(v => +v.toFixed(2)), c.rax.toArray().map(v => +v.toFixed(2))]);
+  window.__rig = () => RIG && { bones: RIG.bs.length, spine: RIG.bs.filter(b => b.userData.role === "spine").length, chains: RIG.chains.map(c => [c.name, c.n, +c.share.toFixed(0), +(c.sigma).toFixed(2)]),
+    nanBones: RIG.bs.filter(b => ![...b.position.toArray(), ...b.quaternion.toArray()].every(Number.isFinite)).length, regionCounts: [0, 1, 2].map(r => RIG.region.filter(x => x === r).length) };
+  window.__rec = () => {
+    if (!RIG) return; outer.updateMatrixWorld(true);
+    const lat = bn => outer.worldToLocal(bn.getWorldPosition(new THREE.Vector3())).x, tipLat = bn => outer.worldToLocal(tipOf(bn, new THREE.Vector3())).x;
+    const leafs = RIG.bs.filter(b => b.userData.role === "tail" && !b.children.some(c => c.isBone));
+    const finite = RIG.bs.every(b => b.matrixWorld.elements.every(Number.isFinite));
+    TS.push({ t: performance.now() / 1000, base: lat(RIG.bs[6]), head: lat(RIG.bs[0]), tip0: tipLat(leafs[0]), tipMean: leafs.reduce((s, b) => s + tipLat(b), 0) / leafs.length, tips: leafs.map(tipLat), beat, gait, finite });
+    if (TS.length > 4000) TS.shift();
+  };
+}
+
 // fullscreen + idle cursor (display mode). Fullscreen needs a user gesture, so: click / F / dblclick.
 const isFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
 function toggleFull() {
@@ -442,7 +1195,7 @@ if (DISPLAY) {
   addEventListener("wheel", e => { e.preventDefault(); zoomTo = clamp(zoomTo * Math.exp(-e.deltaY * 0.0012), 0.5, 3.5); zoomT = performance.now() / 1000; }, { passive: false });
   scene.add(ghost);
   const toSettings = () => {
-    const u = new URLSearchParams({ display: "0", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, amp: AMP, ax: AX, clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
+    const u = new URLSearchParams({ display: "0", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
     if (isFull()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     location.href = location.pathname + "?" + u;
   };
@@ -464,35 +1217,45 @@ function loop() {
     ARROW.position.copy(outer.position); ARROW.setDirection(new THREE.Vector3(vx, 0, vz).normalize()); ARROW.visible = true;
   } else { outer.position.set(0, 0, 0); outer.quaternion.identity(); ARROW.visible = false; }
   for (const bn of bones) if (bn.userData.q0) bn.quaternion.copy(bn.userData.q0);  // rest FIRST each frame → symmetric wave, no accumulation (matches the school)
-  if (CLIP && mixer) mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * beat + 0.9 * Math.abs(steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
+  if (CLIP && mixer && !POSE) mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * beat + 0.9 * Math.abs(steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
   if (DISPLAY && PROC && bones.length > 2) {
-    const amp = AMP * (0.08 + 0.92 * beat), bendC = clamp(steer * 1.2, -2.6, 2.6) * 0.10 * BEND_SIGN;   // more flex: the body really curls into a turn
+    const amp0 = 0.08 + 0.92 * beat, bendC = clamp(steer * 1.2, -2.6, 2.6) * 0.10 * BENDK * BEND_SIGN;   // more flex: the body really curls into a turn
     for (const bn of bones) {
       const tw = bn.userData.tw || 0, u = bn.userData;
+      if (u.role === "tail" || u.role === "fin" || u.own || u.dead) continue;      // rigged tail/fins: drag springs + ripple only (finStep)
       const env = 0.12 + 0.88 * tw * tw;                                         // small head yaw, big tail sweep
       const curv = tw < 0.15 ? 0 : tw < 0.72 ? 1.9 * Math.pow((tw - 0.15) / 0.57, 1.3) : 1.9 - 11.5 * (tw - 0.72);   // rigid head/gills → progressively rubbery toward the tail base, then the tail counter-flick
-      const target = Math.sin(phase - tw * 5.65) * amp * env + bendC * curv;     // k = 0.9·2π → λ ≈ 1.1 body
+      const wv = Math.sin(phase - tw * 5.65) * env;                              // k = 0.9·2π → λ ≈ 1.1 body
       // spring: stiff head … looser tail (natural freq stays ABOVE the beat so the stroke isn't filtered out),
       // under-damped → the tail/fins lag and overshoot on stroke starts, glides and bend changes
       const k = (1900 - 1550 * Math.min(tw, 0.75)) / ZOOM, c = 2 * Math.sqrt(k) * 0.4;   // stiff head … rubbery rear; bigger body flexes slower
-      for (let h = dt, n = Math.ceil(dt / 0.004), sdt = dt / n; n > 0; n--) {     // sub-steps: stable on slow frames
-        u.av = (u.av || 0) + (k * (target - (u.a || 0)) - c * (u.av || 0)) * sdt; u.a = (u.a || 0) + u.av * sdt;
+      for (const a of ["x", "y", "z"]) {                                          // every axis with a non-zero amplitude bends at once (the dominant axis keeps u.a/u.av for wallCollide)
+        if (a !== AX && !(AMPS[a] > 0)) continue;
+        const ka = a === AX ? "a" : "a_" + a, kv = a === AX ? "av" : "av_" + a, target = wv * AMPS[a] * amp0 + bendC * curv * (AMP > 0 ? AMPS[a] / AMP : 0);   // displayed amplitude = applied; the C-bend splits in the same proportion
+        for (let n = Math.ceil(dt / 0.004), sdt = dt / n; n > 0; n--) {     // sub-steps: stable on slow frames
+          u[kv] = (u[kv] || 0) + (k * (target - (u[ka] || 0)) - c * (u[kv] || 0)) * sdt; u[ka] = (u[ka] || 0) + u[kv] * sdt;
+        }
+        if (a === "x") bn.rotateX(u[ka]); else if (a === "y") bn.rotateY(u[ka]); else bn.rotateZ(u[ka]);
       }
-      if (AX === "x") bn.rotateX(u.a); else if (AX === "y") bn.rotateY(u.a); else bn.rotateZ(u.a);
     }
-  } else if (PROC && bones.length > 2) {
+  } else if (PROC && bones.length > 2 && !POSE) {
     const ph = DISPLAY ? phase : t * 4.5, bank = DISPLAY ? clamp(turn * 4, -1, 1) * 0.05 : 0;   // bank: bend into the turn (as the school)
-    for (let i = 0; i < bones.length; i++) { const tw = bones[i].userData.tw || 0, a = (Math.sin(ph - tw * 5) * AMP + bank) * tw * tw; if (AX === "x") bones[i].rotateX(a); else if (AX === "y") bones[i].rotateY(a); else bones[i].rotateZ(a); }
+    for (let i = 0; i < bones.length; i++) { const tw = bones[i].userData.tw || 0, w = Math.sin(ph - tw * 5) * tw * tw; for (const ax of ["x", "y", "z"]) { const a = w * AMPS[ax] + (ax === AX ? bank * tw * tw : 0); if (ax === "x") bones[i].rotateX(a); else if (ax === "y") bones[i].rotateY(a); else bones[i].rotateZ(a); } }
   }
-  if (DISPLAY && bones.length > 2) { finStep(dt); wallCollide(dt); }
+  if (DISPLAY && bones.length > 2) { finStep(dt); anatStep(dt, t); wallCollide(dt); } else anatStep(dt, t);
+  if (window.__rec) window.__rec();
+  if (window.__hold && RIG) {   // debug: hold a static test pose (spine bend / tail flap / fin flap, radians per bone) to inspect skinning + measure stretch
+    const h = window.__hold; for (const bn of bones) { bn.quaternion.copy(bn.userData.q0); const u = bn.userData;
+      if (u.role === "spine") rotBone(bn, h.spine || 0); else if (u.rax) bn.quaternion.multiply(_qf.setFromAxisAngle(u.rax, (u.role === "tail" ? h.tail : h.fin) * (h.dir || 1) || 0)); }
+  }
   if (!DISPLAY) controls.update();
   renderer.render(scene, cam);
-  info.textContent = `${MODEL}  ·  rot X:${CORR.x}° Y:${CORR.y}° Z:${CORR.z}°  ·  bend ${AX} amp ${AMP}  ·  swim ${SWIM ? "on (red arrow = direction)" : "off"}`;
+  info.textContent = `${MODEL}  ·  rot X:${CORR.x}° Y:${CORR.y}° Z:${CORR.z}°  ·  bend x ${AMPS.x} y ${AMPS.y} z ${AMPS.z}  ·  swim ${SWIM ? "on (red arrow = direction)" : "off"}`;
   requestAnimationFrame(loop);
 }
 </script>
 <script>
-fetch("version.txt", { cache: "no-store" }).then(r => r.ok ? r.text() : "").then(t => { document.getElementById("ver").textContent = t.trim().replace(/\s+/g, " "); }).catch(() => {});
+fetch("/version.txt", { cache: "no-store" }).then(r => r.ok ? r.text() : "").then(t => { document.getElementById("ver").textContent = t.trim().replace(/\s+/g, " "); }).catch(() => {});
 </script>
 </body>
 </html>
