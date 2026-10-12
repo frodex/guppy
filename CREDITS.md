@@ -18,3 +18,4 @@ Source: https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc2
 Licence: Creative Commons Attribution 4.0 (CC BY 4.0) - https://creativecommons.org/licenses/by/4.0/
 File: `site/goldfish.glb` (simplified, textures converted to WebP; rigged and animated at runtime by the page).
 File: `site/goldfish-mouth.glb` (the model used by /goldfish since 2026-10-12): the same model modified here: tail and fins rebuilt as thin membranes, holes at the fin roots closed, a translucency attribute on the fins, and a mouth and gill openings cut into the head with interior surfaces; textures re-encoded as WebP.
+File: `site/goldfish-natural.glb` (the model used by /goldfish since 2026-10-12, v1.1): the same derivative with the rear body and tail root reshaped into a smooth taper, the fin roots faired, and the filled patches re-textured from the neighbouring scales.

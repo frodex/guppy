@@ -51,7 +51,7 @@
   &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
   &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
   <div id="about"><h3>About / Credits</h3>
-    <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, mouth and gills added here)</div>
+    <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, tail root reshaped, mouth and gills added here)</div>
     <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>).</div>
     <div>Display mode: click or F for fullscreen, scroll to zoom, S for settings.</div>
     <div>Version: <span id="ver"></span></div>
@@ -77,12 +77,12 @@ const DISPLAY = Q.get("display") === "1";                // display mode: black,
 //   bend = C-bend scale (stiffer body); fg/fmax = drag torque gain / max bend per joint (rad); rip = active tail ripple scale. URL overrides: ?amp= ?fk= ?fz= ?rip= ?rate= ?glide=
 const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, matte: true, anat: "betta", dph: 60 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
   "/goldfish.glb": { rx: 0, bx: 0.1, by: 0.4, bz: 0.0125, rig: "goldfish", rate: 0.55, glide: 2.0, speed: 0.7, fk: 0.3, fz: 0.3, rip: 1.4, fg: 0.38, fmax: 0.42, bend: 0.45, cum: 0.85, vk: 0.5, vdk: 0.5, vfl: 0.05, vspr: 1.1 } };
-const MKEY = "/goldfish-mouth.glb";   // the one model on this page (thin fins, translucent edges, hinged mouth + gills); new name because /*.glb is cached immutable
+const MKEY = "/goldfish-natural.glb";   // the one model on this page (thin fins, translucent edges, hinged mouth + gills); new name because /*.glb is cached immutable
 const PRE = PRESETS["/goldfish.glb"];
 const GOLD = PRE.rig === "goldfish";
 const TUNE = k => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : 1));      // per-model motion tunables (default 1 = unchanged)
 const BENDK = TUNE("bend"), RATE = TUNE("rate"), GLIDE = TUNE("glide"), SPEEDK = TUNE("speed"), FK = TUNE("fk"), FZ = Q.has("fz") ? +Q.get("fz") : (PRE.fz || 0.24), RIP = Q.has("rip") ? +Q.get("rip") : (PRE.rip || 0);
-const TL = Q.has("tl") ? Math.max(0, Math.min(1, +Q.get("tl") || 0)) : 1, TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.35, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
+const TL = Q.has("tl") ? Math.max(0, Math.min(1, +Q.get("tl") || 0)) : 1, TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.55, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
 // fins/tail: alpha falls from 1 (fin<0.35) to TLMIN at the free margin, fin rays (darker/denser texture stripes, = texture luminance below its own blurred value) keep +0.25; plus a warm back-light (light behind the sheet / fish looking toward the light) scaled by _fin.
 // Order-independent on ONE double-sided mesh: alpha-to-coverage (MSAA, per-sample depth) or alpha hash (stochastic discard) - no blending, no sorting; body has fin=0 -> alpha 1 -> fully opaque.
 function patchFin(m) {
