@@ -19,3 +19,10 @@ Licence: Creative Commons Attribution 4.0 (CC BY 4.0) - https://creativecommons.
 File: `site/goldfish.glb` (simplified, textures converted to WebP; rigged and animated at runtime by the page).
 File: `site/goldfish-mouth.glb` (the model used by /goldfish since 2026-10-12): the same model modified here: tail and fins rebuilt as thin membranes, holes at the fin roots closed, a translucency attribute on the fins, and a mouth and gill openings cut into the head with interior surfaces; textures re-encoded as WebP.
 File: `site/goldfish-natural.glb` (the model used by /goldfish since 2026-10-12, v1.1): the same derivative with the rear body and tail root reshaped into a smooth taper, the fin roots faired, and the filled patches re-textured from the neighbouring scales.
+File: `site/goldfish-natural-lo.glb` (new 2026-10-12): simplified from goldfish-natural (decimated to roughly 20k triangles, all custom attributes and the mouth rig kept). Used by both pages in the Low quality setting and for every goldfish after the second one.
+
+Both models can appear on either page (`/` and `/goldfish` have a fish picker: betta, goldfish or a mix, 1-8 fish), so the settings view of both pages credits both.
+
+## Libraries (additional)
+
+`site/vendor/three/examples/jsm/utils/SkeletonUtils.js` - three@0.160.0 (MIT), extracted unmodified from the npm tarball (checked against the registry's dist.integrity); used to clone rigged fish.

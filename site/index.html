@@ -23,6 +23,9 @@
   #back svg { width: 100%; height: 100%; display: block; }
   body.display #back { display: block; }
   body.display.idle #back { opacity: 0; pointer-events: none; }
+  #credit { display: none; position: fixed; right: 12px; bottom: 8px; z-index: 3; font-size: 11px; opacity: .6; text-align: right; max-width: 60vw; }
+  #credit a { color: inherit; }
+  body.display #credit { display: block; color: #ffffff88; opacity: 1; transition: opacity 1s linear; pointer-events: none; }   /* corner credit: every model on screen, fades out 4 s after load / a fish change; full credits are in the settings view (#about) */
   #about { flex-basis: 100%; margin-top: 6px; padding-top: 8px; border-top: 1px solid #ffffff22; font-size: 12px; line-height: 1.6; }
   #about h3 { margin: 0 0 4px; font-size: 12px; color: #9fe9ff; }
   #about a { color: #bfeaff; text-decoration: underline; }
@@ -50,39 +53,78 @@
   Z<button data-bd="z" data-d="-1">−</button><span id="ampv-z">0.02</span><button data-bd="z" data-d="1">+</button>
   &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
   &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
+  <br>
+  <b>quality</b> <button data-q="auto">auto</button><button data-q="high">high</button><button data-q="low">low</button> <span id="qnote"></span>
+  &nbsp;<button id="tlb" title="translucent fins and tail (models with a fin mask)">see-through fins: off</button>
+  &nbsp;<b>fish</b> <button data-fish="betta">betta</button><button data-fish="goldfish">goldfish</button><button data-fish="mix">mix</button>
+  &nbsp;count <button id="nminus">−</button><span id="nv">1</span><button id="nplus">+</button> <span style="opacity:.65">(this view shows one fish; the count applies in ▶ display)</span>
   <div id="about"><h3>About / Credits</h3>
     <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
+    <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, tail root reshaped, mouth and gills added here; a lower-polygon copy, goldfish-natural-lo, is simplified further from goldfish-natural)</div>
     <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
     <div>Display mode: click or F for fullscreen, scroll to zoom, S for settings.</div>
     <div>Version: <span id="ver"></span></div>
-    <div><a href="/goldfish">Goldfish</a></div>
+    <div><a href="/">Betta</a> &middot; <a href="/goldfish">Goldfish</a></div>
   </div>
 </div>
 <button id="back" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
+<div id="credit"></div>
 <div id="info">drag to orbit · tune the bend, then press ▶ display</div>
 <script type="module">
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 
-let AX = "z", AMP = 0.02, AMPS = { x: 0, y: 0, z: 0.02 }, CLIP = true, PROC = true, SWIM = false;
-const CORR = { x: 0, y: 0, z: 0 };                       // nose-correction euler (90° steps)
+let CLIP = true, PROC = true, SWIM = false;
 const Q = new URLSearchParams(location.search);
 if (!Q.has("display")) Q.set("display", "1");   // baked-in default: the landing view is display mode
+const PAGE = "betta";   // this page's default fish; picker choices are remembered per page
 const DISPLAY = Q.get("display") === "1";                // display mode: black, fish only, natural wander path
 // per-model presets = the values the school uses (index.html G1/G2); URL params override
 // guppies.glb: the Owner's tuned load defaults (2026-10-04: rot X 20°, bend z, amp 0.1 — swims nose-first)
 // goldfish.glb (2026-10-11): nose +Z, up +Y in the file (verified) → rot 0; no skeleton in the file, so `rig` builds one at load (rigGoldfish).
 //   ax y = lateral bend about the up axis; rate/glide/speed = slower stroke, longer glides, slower cruise; fk/fz = fin+tail spring stiffness / damping ratio (softer + longer-lagging than the betta);
 //   bend = C-bend scale (stiffer body); fg/fmax = drag torque gain / max bend per joint (rad); rip = active tail ripple scale. URL overrides: ?amp= ?fk= ?fz= ?rip= ?rate= ?glide=
-const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, matte: true, anat: "betta", dph: 60 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
+const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, matte: true, anat: "betta", dph: 60, cc: 0, ccr: 0.3, rough: 0.6, metal: 0.04 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
   "/goldfish.glb": { rx: 0, bx: 0.1, by: 0.4, bz: 0.0125, rig: "goldfish", rate: 0.55, glide: 2.0, speed: 0.7, fk: 0.3, fz: 0.3, rip: 1.4, fg: 0.38, fmax: 0.42, bend: 0.45, cum: 0.85, vk: 0.5, vdk: 0.5, vfl: 0.05, vspr: 1.1 } };
-const MKEY = "/guppies.glb";   // the one model on this page (the betta)
-const PRE = PRESETS["/guppies.glb"];
-const GOLD = PRE.rig === "goldfish";
-const TUNE = k => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : 1));      // per-model motion tunables (default 1 = unchanged)
-const BENDK = TUNE("bend"), RATE = TUNE("rate"), GLIDE = TUNE("glide"), SPEEDK = TUNE("speed"), FK = TUNE("fk"), FZ = Q.has("fz") ? +Q.get("fz") : (PRE.fz || 0.24), RIP = Q.has("rip") ? +Q.get("rip") : (PRE.rip || 0);
-const TL = Q.has("tl") ? Math.max(0, Math.min(1, +Q.get("tl") || 0)) : 1, TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.55, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
+// only the server's known models may be requested; anything else (or a failed load) falls back to the default fish with ITS OWN preset
+const KNOWN = /^\/?(guppies|goldfish-natural|goldfish-natural-lo)\.glb$/;   // the models this site serves (betta; goldfish; low-poly goldfish)
+function fallbackToDefault(bad) {            // reload without m + the per-model overrides, so guppies.glb gets its own preset; ?nf= carries the message
+  const u = new URLSearchParams(location.search);
+  for (const k of ["m", "rx", "ry", "rz", "amp", "ax", "bx", "by", "bz"]) u.delete(k);
+  u.set("nf", bad); location.replace(location.pathname + "?" + u);
+}
+const NF = Q.get("nf");
+if (Q.has("m") && !KNOWN.test(Q.get("m"))) { fallbackToDefault(Q.get("m")); throw new Error("unknown model " + Q.get("m")); }
+const MKEY0 = Q.get("m") ? "/" + Q.get("m").replace(/^\//, "") : "/guppies.glb";   // default fish of this page (/ = betta, /goldfish = goldfish); new names because /*.glb is cached immutable
+PRESETS["/goldfish-thin3.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin3.glb (2026-10-12): tail + fins retopologised as clean single-layer membrane meshes (work-goldfish/thin3/)
+PRESETS["/goldfish-thin5.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin5.glb (2026-10-12): thin4 geometry + per-vertex _FIN (0 at the fin/tail root -> 1 at the free margin) driving the translucent-fin shader (work-goldfish/thin5/)
+PRESETS["/goldfish-natural.glb"] = PRESETS["/goldfish.glb"];   // goldfish-natural.glb (2026-10-12): mouth2 + tapered tail root, faired fin roots, patch texture rebaked (Image-bot-01a, /root/goldfish-natural-2026-10-11/)
+PRESETS["/goldfish-natural-lo.glb"] = PRESETS["/goldfish.glb"];   // goldfish-natural-lo.glb (2026-10-12): ~20k-triangle decimated copy of goldfish-natural.glb (all custom attributes + mouthRig kept); used in Low and for every goldfish after the 2nd (work-goldfish/lo/)
+PRESETS["/goldfish-mouth2.glb"] = PRESETS["/goldfish.glb"];   // goldfish-mouth2.glb (2026-10-12): goldfish-mouth.glb with the C21 lip-rim relaxation + rebuilt mouth pocket (no sawtooth inside the open mouth)
+PRESETS["/goldfish-mouth.glb"] = PRESETS["/goldfish.glb"];   // goldfish-mouth.glb (2026-10-12): thin5 + a real mouth slit and gill slits cut into the skin (twinned lips, mouth/gill pockets) with per-vertex _PART/_WGT bone-part weights driving a hinged jaw, protrusible premaxilla, maxillae, opercula and branchiostegals (work-goldfish/mouth/)
+PRESETS["/goldfish-thin4.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin4.glb (2026-10-12): thin3 + body-skin holes closed at every fin root and the tail (work-goldfish/thin4/)
+PRESETS["/goldfish-thin2.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin2.glb (2026-10-12): rebuilt from the 766k-tri source: fins/tail = single mid-surface sheet (work-goldfish/thin2/)
+PRESETS["/goldfish-thin.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin.glb (2026-10-12): the same goldfish with the tail + fins collapsed to thin sheets (work-goldfish/thin/); identical preset/rig
+// BETTA FLOW (2026-10-12): betta-only motion/anatomy candidates, URL &flow=0 (old) 1 (subtle) 2 (recommended, default) 3 (very loose). Merged into the betta preset only; the goldfish/other presets never see this.
+//   lfk/lfz/lg = legacy fin-bone stiffness scale / damping-ratio scale / drag-gain; vk vdk vg vmax vrip vfl vz = caudal veil (spring base, per-joint falloff, drag gain, bend cap, ripple, flutter, damping ratio);
+//   dwa dph dkw dz dg dfl dcap dcouple = dorsal/anal ray wave; eyemax eyek eyetrk vor = eye range / saccade interval scale / gaze-tracks-turn gain / VOR; gill jaw gillrate gillmax pec pecf pecfmax = breathing + pectoral feel.
+const BETTA_FLOW = {
+  1: { lfk: 0.7, lfz: 0.8, lg: 0.7, vk: 0.7, vdk: 0.5, vg: 1.1, vmax: 1.6, vrip: 0.10, vfl: 0.08, vz: 0.20, dwa: 0.22, dkw: 17, dz: 0.34, dg: 0.22, dfl: 0.07, dcap: 0.75, eyemax: 20, eyek: 0.7, eyetrk: 0.5, vor: 0.4, gill: 10, jaw: 9, gillrate: 75, gillmax: 125, pec: 24, pecf: 1.4, pecfmax: 3.0 },
+  2: { lfk: 0.5, lfz: 0.65, lg: 0.9, vk: 0.45, vdk: 0.45, vg: 1.3, vmax: 1.9, vrip: 0.16, vfl: 0.12, vz: 0.14, dwa: 0.30, dkw: 13, dz: 0.28, dg: 0.28, dfl: 0.10, dcap: 0.95, eyemax: 24, eyek: 0.5, eyetrk: 0.8, vor: 0.5, gill: 13, jaw: 11, gillrate: 80, gillmax: 135, pec: 28, pecf: 1.6, pecfmax: 3.4 },
+  3: { lfk: 0.35, lfz: 0.5, lg: 1.1, vk: 0.3, vdk: 0.4, vg: 1.5, vmax: 2.2, vrip: 0.24, vfl: 0.18, vz: 0.10, dwa: 0.40, dkw: 10, dz: 0.22, dg: 0.34, dfl: 0.14, dcap: 1.2, eyemax: 26, eyek: 0.4, eyetrk: 1.0, vor: 0.6, gill: 15, jaw: 12, gillrate: 85, gillmax: 140, pec: 32, pecf: 1.8, pecfmax: 3.8 } };
+const BETTA_FLOWN = Q.has("flow") ? Math.round(+Q.get("flow")) : 2;
+if (BETTA_FLOW[BETTA_FLOWN]) Object.assign(PRESETS["/guppies.glb"], BETTA_FLOW[BETTA_FLOWN]);   // (merged into the betta preset only; the goldfish/other presets never see this)
+// persistence: URL params win, then localStorage (keys fish.q / fish.tl / fish.fish / fish.n)
+const LK = k => "fish." + (k === "fish" || k === "n" ? PAGE + "." : "") + k;   // fish + count are remembered per page
+const LS = { get(k) { try { return localStorage.getItem(LK(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(LK(k), v); } catch (e) {} } };
+const pick = k => (Q.has(k) ? Q.get(k) : LS.get(k));
+let QMODE = ["auto", "high", "low"].includes(pick("q")) ? pick("q") : "auto";   // quality setting: auto | high | low
+let QEFF = QMODE === "low" ? "low" : "high";                                     // level actually applied (Auto starts High and may step to Low)
+const tl0 = pick("tl");
+let TL = tl0 == null ? 0 : Math.max(0, Math.min(1, +tl0 || 0)), TLON = TL > 0 ? TL : 1;   // translucent fins/tail strength 0..1 (the settings switch toggles 0 <-> TLON)
+const TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.55, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
 // fins/tail: alpha falls from 1 (fin<0.35) to TLMIN at the free margin, fin rays (darker/denser texture stripes, = texture luminance below its own blurred value) keep +0.25; plus a warm back-light (light behind the sheet / fish looking toward the light) scaled by _fin.
 // Order-independent on ONE double-sided mesh: alpha-to-coverage (MSAA, per-sample depth) or alpha hash (stochastic discard) - no blending, no sorting; body has fin=0 -> alpha 1 -> fully opaque.
 function patchFin(m) {
@@ -113,131 +155,301 @@ function patchFin(m) {
   if (TLMODE === "hash") m.alphaHash = true; else m.alphaToCoverage = true;
   m.alphaTest = 0;
 }
-if (PRE.rx != null) CORR.x = PRE.rx;                    // load defaults apply to tuning AND display
-// per-axis bend amplitudes bx/by/bz (all applied at once). Legacy ?ax=&amp= (old links) = that one axis only.
-const syncAx = () => { AX = "z"; let m = -1; for (const a of ["x", "y", "z"]) if (AMPS[a] > m) { m = AMPS[a]; AX = a; } AMP = AMPS[AX]; };   // AX/AMP = the dominant axis (calibration, fin ripple, wall flatten)
-if (PRE.amp != null) { AMPS = { x: 0, y: 0, z: 0 }; AMPS[PRE.ax || "z"] = PRE.amp; }
-for (const a of ["x", "y", "z"]) if (PRE["b" + a] != null) AMPS[a] = PRE["b" + a];
-for (const a of ["x", "y", "z"]) if (Q.has("r" + a)) CORR[a] = +Q.get("r" + a);
-if (["bx", "by", "bz"].some(k => Q.has(k))) { for (const a of ["x", "y", "z"]) if (Q.has("b" + a)) AMPS[a] = +Q.get("b" + a) || 0; }
-else if (Q.has("amp") || Q.has("ax")) {
-  const ax0 = Q.has("ax") ? Q.get("ax") : (PRE.ax || "z"), am0 = Q.has("amp") ? +Q.get("amp") : (PRE.amp != null ? PRE.amp : AMPS[ax0]);
-  AMPS = { x: 0, y: 0, z: 0 }; if (ax0 in AMPS) AMPS[ax0] = am0;
+const tmp = new THREE.Vector3(), D2R = Math.PI / 180;
+// ================= PER-FISH STATE (2026-10-12, quality + picker) =================
+// Everything that used to be a module-level variable of THE fish (position/velocity/gait/steering/wall state, skeleton, rig, fins, anatomy, species presets and tunables)
+// lives in one object per fish. `F` is the fish currently being stepped/assembled; every function below reads and writes F.<state>. ONE code path for 1..8 fish.
+const FISH = []; let F = null;
+function newFish(i) {
+  const f = {
+    i, outer: new THREE.Group(), corr: new THREE.Group(), root: null, mixer: null, action: null, bones: [],
+    P: new THREE.Vector3(), V: new THREE.Vector3(1, 0, 0), TGT: new THREE.Vector3(), VEL: new THREE.Vector3(0.9, 0, 0),
+    speed: 0.9, tSpeed: 0.9, nextPick: 0, turn: 0, phase: 0,
+    gait: "coast", gaitEnd: 0, coastStart: 0, beat: 0.3, omega: 5, steer: 0, BEND_SIGN: 1,
+    yawRate: 0, atWall: false, wallTgt: false, wallSince: 0, pressLat: 0, pressY: 0, impact: 0, ram: 0,   // ram: into-wall speed measured BEFORE the wall stops it; impact: extra bend from ramming the glass; pressLat/pressY: wall pressure (signed, body frame / vertical)
+    INTENT: 0, wallHits: 0, tailHits: 0, HEADS: null, PUSH: { v: 0, tgt: 0 }, VEIL: { acc: 0, sp: 0, spr: 0 },
+    FINS: [], CH: {}, NB: {}, BODY_L: 1, SPINE_SET: null, RIG: null,
+    AN: { eyes: [], ops: [], jaw: null, pecs: [], rays: [], bones: [], own: [], ready: false, S: null },
+    // species (set by initSpecies)
+    BASE: "", MKEY: "", MODEL: "", PRE: {}, GOLD: false, BENDK: 1, RATE: 1, GLIDE: 1, SPEEDK: 1, FK: 1, FZ: 0.24, RIP: 0, CUM_BEND: 0.5,
+    CORR: { x: 0, y: 0, z: 0 }, AMPS: { x: 0, y: 0, z: 0.02 }, AX: "z", AMP: 0.02
+  };
+  f.outer.add(f.corr);   // outer = lookAt; corr = nose correction
+  return f;
 }
-syncAx();
-const bendQS = () => ({ bx: AMPS.x, by: AMPS.y, bz: AMPS.z });
+const TUNE = k => (Q.has(k) ? +Q.get(k) : (F.PRE[k] != null ? F.PRE[k] : 1));      // per-model motion tunables (default 1 = unchanged)
+// per-axis bend amplitudes bx/by/bz (all applied at once). Legacy ?ax=&amp= (old links) = that one axis only.
+const syncAx = () => { F.AX = "z"; let m = -1; for (const a of AXES) if (F.AMPS[a] > m) { m = F.AMPS[a]; F.AX = a; } F.AMP = F.AMPS[F.AX]; };   // AX/AMP = the dominant axis (calibration, fin ripple, wall flatten)
+function initSpecies(f, base, key) {
+  F = f; f.BASE = base; f.MKEY = key; f.MODEL = key;
+  f.PRE = PRESETS[key] || (/(^|\/)goldfish(-thin[23]?|-mouth2?|-natural)?\.glb$/.test(key) ? PRESETS["/goldfish.glb"] : null) || {};
+  f.GOLD = f.PRE.rig === "goldfish";
+  f.BENDK = TUNE("bend"); f.RATE = TUNE("rate"); f.GLIDE = TUNE("glide"); f.SPEEDK = TUNE("speed"); f.FK = TUNE("fk");
+  f.FZ = Q.has("fz") ? +Q.get("fz") : (f.PRE.fz || 0.24); f.RIP = Q.has("rip") ? +Q.get("rip") : (f.PRE.rip || 0);
+  f.CUM_BEND = Q.has("cum") ? +Q.get("cum") : (f.PRE.cum != null ? f.PRE.cum : 0.5);
+  if (f.PRE.rx != null) f.CORR.x = f.PRE.rx;                    // load defaults apply to tuning AND display
+  if (f.PRE.amp != null) { f.AMPS = { x: 0, y: 0, z: 0 }; f.AMPS[f.PRE.ax || "z"] = f.PRE.amp; }
+  for (const a of AXES) if (f.PRE["b" + a] != null) f.AMPS[a] = f.PRE["b" + a];
+  for (const a of AXES) if (Q.has("r" + a)) f.CORR[a] = +Q.get("r" + a);
+  if (["bx", "by", "bz"].some(k => Q.has(k))) { for (const a of AXES) if (Q.has("b" + a)) f.AMPS[a] = +Q.get("b" + a) || 0; }
+  else if (Q.has("amp") || Q.has("ax")) {
+    const ax0 = Q.has("ax") ? Q.get("ax") : (f.PRE.ax || "z"), am0 = Q.has("amp") ? +Q.get("amp") : (f.PRE.amp != null ? f.PRE.amp : f.AMPS[ax0]);
+    f.AMPS = { x: 0, y: 0, z: 0 }; if (ax0 in f.AMPS) f.AMPS[ax0] = am0;
+  }
+  syncAx();
+}
+const bendQS = () => ({ bx: FISH[0].AMPS.x, by: FISH[0].AMPS.y, bz: FISH[0].AMPS.z });
 if (Q.has("clip")) CLIP = Q.get("clip") === "1";
 if (Q.has("proc")) PROC = Q.get("proc") === "1";
 if (DISPLAY) document.body.classList.add("display");
-const cv = document.getElementById("c"), info = document.getElementById("info");
-const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+// ---- fish list / count / quality: URL params q, tl, fish, n; remembered in localStorage (URL wins) ----
+const clampN = v => Math.max(1, Math.min(8, Math.round(+v) || 1));
+const modelOf = tok => {
+  tok = tok.trim().toLowerCase();
+  if (tok === "betta") return "/guppies.glb";
+  if (tok === "goldfish") return /goldfish/.test(MKEY0) ? MKEY0 : "/goldfish-natural.glb";
+  const k = "/" + tok.replace(/\.glb$/, "") + ".glb"; return KNOWN.test(k) ? k : null;
+};
+// fish=betta | goldfish | mix | betta,goldfish | <any known model name>; fish i takes entry i mod list length. No fish param (and no stored one, and no m/n in the URL) = the single model of ?m= (default betta).
+let FISHTOK = Q.has("fish") ? Q.get("fish") : (Q.has("m") || Q.has("n") ? null : LS.get("fish"));
+function fishList() {
+  const toks = []; for (const t of (FISHTOK || "").split(",")) { if (t.trim().toLowerCase() === "mix") toks.push("betta", "goldfish"); else toks.push(t); }
+  const l = toks.map(modelOf).filter(Boolean); return l.length ? l : [MKEY0];
+}
+let FLIST = fishList();
+let NFISH = Q.has("n") ? clampN(Q.get("n")) : (Q.has("fish") ? Math.max(1, Math.min(8, FLIST.length)) : (Q.has("m") ? 1 : clampN(LS.get("n") || 1)));
+// fish actually built: settings view shows ONE fish (the tuner); display mode shows NFISH. Goldfish use the low-poly file in Low and for every goldfish after the second one.
+function fishPlan() {
+  const out = []; let gold = 0;
+  for (let i = 0; i < (DISPLAY ? NFISH : 1); i++) {
+    const base = FLIST[i % FLIST.length]; let key = base;
+    if (base === "/goldfish-natural.glb") { if (QEFF === "low" || gold >= 2) key = "/goldfish-natural-lo.glb"; gold++; }
+    out.push({ base, key });
+  }
+  return out;
+}
+const speciesUi = () => { const l = FLIST.map(k => k === "/guppies.glb" ? "betta" : (/goldfish/.test(k) ? "goldfish" : k)), s = new Set(l); return s.size > 1 ? "mix" : l[0]; };
+function syncUrl() {
+  const u = new URLSearchParams(location.search); u.set("q", QMODE); u.set("tl", String(TL)); u.set("n", String(NFISH)); if (FISHTOK) u.set("fish", FISHTOK);
+  try { history.replaceState(null, "", location.pathname + "?" + u); } catch (e) {}
+}
+const newQS = () => ({ q: QMODE, tl: TL, n: NFISH, ...(FISHTOK ? { fish: FISHTOK } : {}) });
+
+// ---- renderer / scene ----
+const info = document.getElementById("info");
+let renderer = null, cv = document.getElementById("c"), controls = null;
 const scene = new THREE.Scene(); scene.background = new THREE.Color(DISPLAY ? 0x000000 : 0x0c3a52);
 const cam = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100); cam.position.set(0, DISPLAY ? 0 : 1, DISPLAY ? 10 : 7);
 function rs() { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); }
-addEventListener("resize", rs); rs();
-const controls = new OrbitControls(cam, cv); controls.enableDamping = true; controls.enabled = !DISPLAY;
+addEventListener("resize", rs);
+// antialias is fixed when the WebGL context is created, so a quality change replaces the canvas and renderer (old context released); GPU resources of the shared textures/materials are re-uploaded by the new renderer.
+function makeRenderer() {
+  const low = QEFF === "low", old = renderer;
+  if (old) { const c = document.createElement("canvas"); c.id = "c"; old.domElement.replaceWith(c); cv = c; old.dispose(); old.forceContextLoss(); }
+  renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: !low });
+  renderer.setPixelRatio(low ? 1 : Math.min(devicePixelRatio, 2));
+  rs();
+  if (controls) controls.dispose();
+  controls = new OrbitControls(cam, cv); controls.enableDamping = true; controls.enabled = !DISPLAY;
+  if (DISPLAY) cv.addEventListener("click", () => { if (!isFull()) toggleFull(); });
+}
+makeRenderer();
 scene.add(new THREE.HemisphereLight(0xffffff, 0x335577, 1.4));
 const dl = new THREE.DirectionalLight(0xffffff, 1.6); dl.position.set(2, 5, 4); scene.add(dl);
 scene.add(new THREE.AmbientLight(0x88aacc, 0.6));
 if (!DISPLAY) scene.add(new THREE.GridHelper(10, 10, 0x224455, 0x183a4a));
 const ARROW = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 2.4, 0xff5566); if (!DISPLAY) scene.add(ARROW); // shows swim direction
+if (NF) { const d = document.createElement("div"); d.id = "nf"; d.textContent = "Model '" + NF.slice(0, 60) + "' not found, showing the default fish";
+  d.style.cssText = "position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:5;font:12px sans-serif;color:#ffd9a0;background:#000a;padding:4px 10px;border-radius:4px;pointer-events:none";
+  document.body.appendChild(d); setTimeout(() => d.style.opacity = 0, 8000); d.style.transition = "opacity 1.5s"; }
 
-const outer = new THREE.Group(), corr = new THREE.Group();   // outer = lookAt; corr = nose correction
-outer.add(corr); scene.add(outer);
-let mixer = null, bones = [], action = null;
-const MODEL = MKEY;
-new GLTFLoader().load(MODEL, g => {
-  const root = g.scene; if (Q.get("debug") === "1") window.__root = root;
+// ---- loading: each GLB is loaded ONCE and shared; every fish gets its own SkeletonUtils clone (own bones, own geometry copy so the per-fish rigging cannot touch another fish) ----
+const GLB = new Map();
+function loadGlb(key) {
+  if (!GLB.has(key)) GLB.set(key, new GLTFLoader().loadAsync(key).catch(err => { GLB.delete(key); console.warn("model load failed:", key, err); if (!NF) fallbackToDefault(key.replace(/^\//, "")); throw err; }));
+  return GLB.get(key);
+}
+async function loadAll(plan) {
+  const keys = [...new Set(plan.map(p => p.key))], gs = await Promise.all(keys.map(loadGlb)), o = {}; keys.forEach((k, i) => { o[k] = gs[i]; }); return o;
+}
+const KIN_NUM = ["speed", "tSpeed", "nextPick", "turn", "phase", "gaitEnd", "coastStart", "beat", "omega", "steer", "yawRate", "wallSince", "pressLat", "pressY", "impact", "ram"];
+function makeFish(i, pl, prev, mates) {
+  const f = newFish(i); initSpecies(f, pl.base, pl.key); F = f;
+  { const sp = k => /goldfish/.test(k) ? "g" : "o", mixed = DISPLAY && new Set(Array.from({ length: NFISH }, (_, j) => sp(FLIST[j % FLIST.length]))).size > 1;
+    f.SZ = mixed && sp(pl.base) === "g" ? 1.2 : 1; ZOOM = ZG * f.SZ; }   // goldfish 1.2x when both species share the tank (betta unchanged; goldfish-only tank unchanged)
+  if (prev) {   // rebuild (quality / fins / species change): the fish keeps where it is and where it is going
+    f.P.copy(prev.P); f.V.copy(prev.V); f.VEL.copy(prev.VEL); f.TGT.copy(prev.TGT);
+    for (const k of KIN_NUM) f[k] = prev[k];
+    f.gait = prev.gait; f.wallTgt = prev.wallTgt; f.atWall = prev.atWall;
+  } else if (DISPLAY) { pickTarget(0); if (i > 0) spawn(f, mates); }
+  return f;
+}
+function spawn(f, mates) {   // fish 0 starts at the origin as always; the others are scattered through the tank, away from the earlier ones
+  const _s = new THREE.Vector3();
+  for (let tries = 0; tries < 16; tries++) {
+    const z = TANK_FAR * 0.6 + Math.random() * (TANK_NEAR * 0.5 - TANK_FAR * 0.6), w = walls(z);
+    f.P.set((Math.random() * 2 - 1) * w.x * 0.8, (Math.random() * 2 - 1) * w.y * 0.8, z);
+    let ok = true; for (const o of mates) if (_s.copy(f.P).sub(o.P).length() < 1.6) ok = false;
+    if (ok) break;
+  }
+  const a = Math.random() * Math.PI * 2; f.V.set(Math.cos(a), 0, Math.sin(a) * 0.3).normalize(); f.VEL.copy(f.V).multiplyScalar(0.9);
+}
+function assemble(f, g) {
+  F = f;
+  const root = SkeletonUtils.clone(g.scene); F.root = root;
+  root.traverse(n => { if (n.isMesh) { n.geometry = n.geometry.clone(); n.material = Array.isArray(n.material) ? n.material.map(m => m.clone()) : n.material.clone(); } });
+  if (Q.get("debug") === "1" && f.i === 0) window.__root = root;
   let hasSkin = false; root.traverse(n => { if (n.isSkinnedMesh) hasSkin = true; });
-  if (GOLD && !hasSkin) rigGoldfish(root);
-  else if (PRE.anat === "betta" && hasSkin && !Q.has("noanat")) rigBetta(root);                  // skin-less model: build the procedural skeleton + skin weights first
+  if (F.GOLD && !hasSkin) rigGoldfish(root);
+  else if (F.PRE.anat === "betta" && hasSkin && !Q.has("noanat")) rigBetta(root);                  // skin-less model: build the procedural skeleton + skin weights first
   const box = new THREE.Box3().setFromObject(root), sz = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
   const scl = (DISPLAY ? 1.7 : 3.2) / Math.max(sz.x, sz.y, sz.z);   // smaller in display mode: room to roam
   const pivot = new THREE.Group(); pivot.add(root); root.position.set(-c.x, -c.y, -c.z);
-  pivot.scale.setScalar(scl); corr.add(pivot);
+  pivot.scale.setScalar(scl); F.corr.add(pivot);
   root.traverse(n => {
-    if (n.isBone) { if (!n.userData.anat) bones.push(n); if (!n.userData.q0) n.userData.q0 = n.quaternion.clone(); }
+    if (n.isBone) { if (!n.userData.anat) F.bones.push(n); if (!n.userData.q0) n.userData.q0 = n.quaternion.clone(); }
     if (n.isMesh && n.material) (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
       m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide;
       if (TL > 0 && n.geometry && n.geometry.attributes._fin && !(n.geometry.attributes._part && (Q.get("partvis") === "1" || Q.get("anatvis") === "1"))) patchFin(m);
+      // glossy coat (Owner 2026-10-12: the goldfish's highlights look more natural): the betta file ships clearcoat 1 / roughness 0.04, a mirror coat
+      // that only throws tiny hard glints with no environment. Softer, partial coat by default; ?cc= (0..1) ?ccr= (0..1) to tune.
+      if (m.clearcoat !== undefined && (Q.has("cc") || F.PRE.cc != null)) { m.clearcoat = Q.has("cc") ? +Q.get("cc") : F.PRE.cc; m.clearcoatRoughness = Q.has("ccr") ? +Q.get("ccr") : (F.PRE.ccr != null ? F.PRE.ccr : m.clearcoatRoughness); }
+      // surface (Owner 2026-10-12: "the betta is still too glass like"): its metallic-roughness texture is a flat 0.23 roughness / 0.18 metal everywhere,
+      // so the whole fish reflects like glass. Replace with a uniform, much rougher, near-dielectric surface; ?rough= ?metal= to tune.
+      if ((Q.has("rough") || F.PRE.rough != null) && m.roughness !== undefined) { m.roughnessMap = null; m.roughness = Q.has("rough") ? +Q.get("rough") : F.PRE.rough; }
+      if ((Q.has("metal") || F.PRE.metal != null) && m.metalness !== undefined) { m.metalnessMap = null; m.metalness = Q.has("metal") ? +Q.get("metal") : F.PRE.metal; }
       m.needsUpdate = true;
     });
   });
   // tail-weight each bone by its REST position along the body (matches the school) so the wave whips the real tail, not array-order bones
-  corr.updateMatrixWorld(true);
+  F.corr.updateMatrixWorld(true);
   const invRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
-  const pts = bones.map(bn => bn.getWorldPosition(new THREE.Vector3()).applyMatrix4(invRoot));
+  const pts = F.bones.map(bn => bn.getWorldPosition(new THREE.Vector3()).applyMatrix4(invRoot));
   if (pts.length) {
     const bb = new THREE.Box3().setFromPoints(pts), sz = bb.getSize(new THREE.Vector3());
     const ax = sz.x >= sz.y && sz.x >= sz.z ? "x" : (sz.y >= sz.z ? "y" : "z");
     const lo = bb.min[ax], len = (bb.max[ax] - bb.min[ax]) || 1;
     const flip = new URLSearchParams(location.search).get("flip") === "1";       // tail defaults to the min-axis end (nose-up models); ?flip=1 to swap
-    bones.forEach((bn, i) => { const v = (pts[i][ax] - lo) / len; bn.userData.tw = bn.userData.rigTw != null ? bn.userData.rigTw : (flip ? v : (1 - v)); });
-    for (const bn of AN.bones) { const v = (bn.getWorldPosition(tmp).applyMatrix4(invRoot)[ax] - lo) / len; bn.userData.tw = bn.userData.rigTw != null ? bn.userData.rigTw : (flip ? v : (1 - v)); }   // (rigged bones carry their own tail-weight)
+    F.bones.forEach((bn, i) => { const v = (pts[i][ax] - lo) / len; bn.userData.tw = bn.userData.rigTw != null ? bn.userData.rigTw : (flip ? v : (1 - v)); });
+    for (const bn of F.AN.bones) { const v = (bn.getWorldPosition(tmp).applyMatrix4(invRoot)[ax] - lo) / len; bn.userData.tw = bn.userData.rigTw != null ? bn.userData.rigTw : (flip ? v : (1 - v)); }   // (rigged bones carry their own tail-weight)
     if (DISPLAY) {   // turn about the body's middle (skeleton centroid): the bbox centre sits at the nose, so turns swung the whole body round the head
-      const cen = new THREE.Vector3(); let nc = 0; pts.forEach((q, i) => { if (!GOLD || bones[i].userData.role === "spine") { cen.add(q); nc++; } }); cen.divideScalar(nc);   // rigged: spine joints only (the tail fan would drag the centre aft)
+      const cen = new THREE.Vector3(); let nc = 0; pts.forEach((q, i) => { if (!F.GOLD || F.bones[i].userData.role === "spine") { cen.add(q); nc++; } }); cen.divideScalar(nc);   // rigged: spine joints only (the tail fan would drag the centre aft)
       root.position.set(-cen.x, -cen.y, -cen.z);
     }
   }
-  if (DISPLAY && bones.length > 2) {
-    let tb = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tb.userData.tw || 0)) tb = bn;
-    outer.updateMatrixWorld(true); const p0 = tb.getWorldPosition(new THREE.Vector3());
-    for (const bn of bones) { const tw = bn.userData.tw || 0; if (tw > 0.08 && tw < 0.72) { if (AX === "x") bn.rotateX(0.08); else if (AX === "y") bn.rotateY(0.08); else bn.rotateZ(0.08); } }
-    outer.updateMatrixWorld(true); const p1 = tb.getWorldPosition(new THREE.Vector3());
-    BEND_SIGN = (p1.x - p0.x) >= 0 ? 1 : -1;            // outer is identity here: local +X = world +X
-    for (const bn of bones) bn.quaternion.copy(bn.userData.q0);
+  if (DISPLAY && F.bones.length > 2) {
+    let tb = F.bones[0]; for (const bn of F.bones) if ((bn.userData.tw || 0) > (tb.userData.tw || 0)) tb = bn;
+    F.outer.updateMatrixWorld(true); const p0 = tb.getWorldPosition(new THREE.Vector3());
+    for (const bn of F.bones) { const tw = bn.userData.tw || 0; if (tw > 0.08 && tw < 0.72) { if (F.AX === "x") bn.rotateX(0.08); else if (F.AX === "y") bn.rotateY(0.08); else bn.rotateZ(0.08); } }
+    F.outer.updateMatrixWorld(true); const p1 = tb.getWorldPosition(new THREE.Vector3());
+    F.BEND_SIGN = (p1.x - p0.x) >= 0 ? 1 : -1;            // outer is identity here: local +X = world +X
+    for (const bn of F.bones) bn.quaternion.copy(bn.userData.q0);
   }
-  if (DISPLAY && bones.length > 2) setupFins();
-  if (Q.get("debug") === "1" && !RIG) { let bm = null; root.traverse(n => { if (n.isSkinnedMesh && (!bm || n.geometry.attributes.position.count > bm.geometry.attributes.position.count)) bm = n; }); if (bm) { root.updateMatrixWorld(true); bm.skeleton.update(); const n = bm.geometry.attributes.position.count, r = new Float32Array(n * 3), v = new THREE.Vector3(); for (let i = 0; i < n; i++) { bm.getVertexPosition(i, v); r.set([v.x, v.y, v.z], i * 3); } window.__stretchB = () => stretchB(bm, r); } }
-  mixer = new THREE.AnimationMixer(root);
-  if (g.animations && g.animations[0]) { action = mixer.clipAction(g.animations[0]); action.play(); }  // rig-less models have no clip
-  loop();
-}, undefined, err => { console.warn("model load failed:", MODEL, err);  });
+  if (DISPLAY && F.bones.length > 2) setupFins();
+  if (Q.get("debug") === "1" && !F.RIG && f.i === 0) { let bm = null; root.traverse(n => { if (n.isSkinnedMesh && (!bm || n.geometry.attributes.position.count > bm.geometry.attributes.position.count)) bm = n; }); if (bm) { root.updateMatrixWorld(true); bm.skeleton.update(); const n = bm.geometry.attributes.position.count, r = new Float32Array(n * 3), v = new THREE.Vector3(); for (let i = 0; i < n; i++) { bm.getVertexPosition(i, v); r.set([v.x, v.y, v.z], i * 3); } window.__stretchB = () => stretchB(bm, r); } }
+  F.mixer = new THREE.AnimationMixer(root);
+  if (g.animations && g.animations[0]) { F.action = F.mixer.clipAction(g.animations[0]); F.action.play(); }  // rig-less models have no clip
+  scene.add(F.outer);
+}
+function disposeFish(f) {
+  scene.remove(f.outer);
+  f.outer.traverse(n => { if (n.isMesh) { n.geometry.dispose(); (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => m.dispose()); if (n.skeleton) n.skeleton.dispose(); } });
+  if (f.mixer) f.mixer.uncacheRoot(f.root);
+}
+// display-mode corner credit: one line per model on screen, fully visible for 4 s after load / a fish change, then fades over 1 s (CSS) and stays hidden
+const CREDIT_BETTA = '“Guppies” by dannzjs on Sketchfab, CC BY 4.0';
+const CREDIT_GOLD = '“Crimson Cascade red goldfish” by rt699448 on Sketchfab, CC BY 4.0 (simplified, rigged, fins rebuilt, mouth + gills cut here)';
+let creditT = 0;
+function creditShow() {
+  const el = document.getElementById("credit"); if (!el) return;
+  const lines = []; if (FISH.some(f => !f.GOLD)) lines.push(CREDIT_BETTA); if (FISH.some(f => f.GOLD)) lines.push(CREDIT_GOLD);
+  el.replaceChildren(...lines.map(t => { const d = document.createElement("div"); d.textContent = t; return d; }));
+  clearTimeout(creditT); el.style.transition = "none"; el.style.opacity = "1"; void el.offsetWidth; el.style.transition = "";
+  creditT = setTimeout(() => { el.style.opacity = "0"; }, 4000);
+}
+// rebuild every fish from the cached GLBs (quality / fins switch / species / count change), carrying position + heading; the old fish are swapped out in the same tick
+let building = false, pendingRebuild = false;
+async function rebuildFish() {
+  if (building) { pendingRebuild = true; return; }
+  building = true;
+  try {
+    do {
+      pendingRebuild = false;
+      const plan = fishPlan(), gs = await loadAll(plan), prev = FISH.slice();
+      const next = []; plan.forEach((pl, i) => next.push(makeFish(i, pl, prev[i] || null, next)));
+      FISH.length = 0; for (const f of next) { assemble(f, gs[f.MKEY]); FISH.push(f); }
+      for (const o of prev) disposeFish(o);
+      creditShow();
+      F = FISH[0];
+    } while (pendingRebuild);
+  } catch (e) { console.warn("rebuild failed", e); }
+  building = false; autoReset(performance.now());
+}
+const AXES = ["x", "y", "z"], XY = ["x", "y"];
+// ---- UI state / handlers (settings view) ----
+const speciesOf = s => (s === "mix" ? "betta,goldfish" : s);
+function syncUi() {
+  for (const b of document.querySelectorAll("[data-q]")) b.classList.toggle("on", b.dataset.q === QMODE);
+  for (const b of document.querySelectorAll("[data-fish]")) b.classList.toggle("on", b.dataset.fish === speciesUi());
+  const tlb = document.getElementById("tlb"); if (tlb) { tlb.textContent = "see-through fins: " + (TL > 0 ? "on" : "off"); tlb.classList.toggle("on", TL > 0); }
+  const nv = document.getElementById("nv"); if (nv) nv.textContent = NFISH;
+  const qn = document.getElementById("qnote"); if (qn) qn.textContent = QMODE === "auto" ? "(now: " + QEFF + ")" : "";
+}
+function setEff(e) {   // applied level high|low: recreates the renderer (antialias) and rebuilds the fish (goldfish file)
+  if (e === QEFF) return;
+  QEFF = e; makeRenderer(); rebuildFish(); syncUi();
+}
+function setQuality(m) {
+  QMODE = m; LS.set("q", m); syncUrl();
+  const eff = m === "low" ? "low" : "high";
+  if (eff !== QEFF) setEff(eff); else { autoReset(performance.now()); syncUi(); }
+}
+for (const b of document.querySelectorAll("[data-q]")) b.onclick = () => setQuality(b.dataset.q);
+document.getElementById("tlb").onclick = () => { TL = TL > 0 ? 0 : TLON; LS.set("tl", TL); syncUrl(); syncUi(); rebuildFish(); };
+for (const b of document.querySelectorAll("[data-fish]")) b.onclick = () => { FISHTOK = speciesOf(b.dataset.fish); LS.set("fish", FISHTOK); FLIST = fishList(); syncUrl(); syncUi(); rebuildFish(); };
+const setN = v => { NFISH = clampN(v); LS.set("n", NFISH); syncUrl(); syncUi(); if (DISPLAY) rebuildFish(); };
+document.getElementById("nminus").onclick = () => setN(NFISH - 1);
+document.getElementById("nplus").onclick = () => setN(NFISH + 1);
 
 let STEP = 90;
-for (const b of document.querySelectorAll("[data-rot]")) b.onclick = () => { const a = b.dataset.rot; CORR[a] = Math.round((CORR[a] + STEP * (+b.dataset.d)) * 100) / 100; };
+for (const b of document.querySelectorAll("[data-rot]")) b.onclick = () => { const a = b.dataset.rot, C = FISH[0].CORR; C[a] = Math.round((C[a] + STEP * (+b.dataset.d)) * 100) / 100; };
 document.getElementById("step").onclick = e => { STEP = STEP === 90 ? 5 : 90; e.target.textContent = "step " + STEP + "°"; e.target.classList.toggle("on", STEP === 5); };
-document.getElementById("rreset").onclick = () => { CORR.x = CORR.y = CORR.z = 0; };
-const showAmps = () => { for (const a of ["x", "y", "z"]) document.getElementById("ampv-" + a).textContent = +AMPS[a].toFixed(4); };
-showAmps();
-for (const b of document.querySelectorAll("[data-bd]")) b.onclick = () => { const a = b.dataset.bd, d = +b.dataset.d, v = AMPS[a], st = (v > 0.1 || (v >= 0.1 && d > 0)) ? 0.05 : 0.005; AMPS[a] = Math.max(0, +(v + d * st).toFixed(4)); syncAx(); showAmps(); };
+document.getElementById("rreset").onclick = () => { const C = FISH[0].CORR; C.x = C.y = C.z = 0; };
+const showAmps = () => { for (const a of AXES) document.getElementById("ampv-" + a).textContent = +FISH[0].AMPS[a].toFixed(4); };
+for (const b of document.querySelectorAll("[data-bd]")) b.onclick = () => { F = FISH[0]; const a = b.dataset.bd, d = +b.dataset.d, v = F.AMPS[a], st = (v > 0.1 || (v >= 0.1 && d > 0)) ? 0.05 : 0.005; F.AMPS[a] = Math.max(0, +(v + d * st).toFixed(4)); syncAx(); showAmps(); };
 document.getElementById("clip").onclick = e => { CLIP = !CLIP; e.target.classList.toggle("on", CLIP); };
 document.getElementById("proc").onclick = e => { PROC = !PROC; e.target.classList.toggle("on", PROC); };
 document.getElementById("disp").onclick = () => {
-  const u = new URLSearchParams({ display: "1", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
+  const C = FISH[0].CORR, u = new URLSearchParams({ display: "1", m: FISH[0].BASE, rx: C.x, ry: C.y, rz: C.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0, ...newQS() });
   location.href = location.pathname + "?" + u;
 };
 document.getElementById("swim").onclick = e => { SWIM = !SWIM; e.target.textContent = "swim test: " + (SWIM ? "ON" : "OFF"); e.target.classList.toggle("on", SWIM); };
-
-const tmp = new THREE.Vector3(), D2R = Math.PI / 180;
 let last = performance.now(), lastDt = 0;
 
 // ---- display mode: natural wander -------------------------------------------------------------
 // Steer toward a random target inside the visible volume with a capped turn rate (smooth arcs),
 // pick a new target on arrival or after a while, ease speed between targets, stay mostly level,
 // bank into turns, and beat the tail faster when swimming faster.
-const AXS = new THREE.Vector3(), P = new THREE.Vector3(), V = new THREE.Vector3(1, 0, 0), TGT = new THREE.Vector3(), DES = new THREE.Vector3(), PRV = new THREE.Vector3();
-let speed = 0.9, tSpeed = 0.9, nextPick = 0, turn = 0, phase = 0;
+const DES = new THREE.Vector3(), PRV = new THREE.Vector3();
 // ---- gait (display mode): burst-and-coast + C-bend turns + springy follow-through ----------------
 // Basis (fish-locomotion literature): midline = travelling wave A(s)·sin(ωt − ks), envelope rising
 // ~quadratically head→tail, wavelength ≈ 1 body (k ≈ 2π); tail-beat rate scales with speed (Strouhal
 // ≈ 0.3); small fish (guppies, tetras) swim BURST-AND-COAST — a few beats, then a straight passive glide;
 // turns: the body bends into a C toward the turn, the bend travels tailward and the peduncle/tail
 // counter-swings; fins/tail lag the body (secondary motion).
-let gait = "coast", gaitEnd = 0, coastStart = 0, beat = 0.3, omega = 5, steer = 0, BEND_SIGN = 1;
-const DRAG = 0.9, UPV = new THREE.Vector3(0, 1, 0), LAT = new THREE.Vector3(), VEL = new THREE.Vector3(0.9, 0, 0), LATV = new THREE.Vector3();
-let yawRate = 0, atWall = false, wallTgt = false, wallSince = 0, pressLat = 0, pressY = 0, impact = 0, ram = 0;   // ram: into-wall speed measured BEFORE the wall stops it   // impact: extra bend from ramming the glass   // wall pressure (signed, body frame / vertical)
+const DRAG = 0.9, UPV = new THREE.Vector3(0, 1, 0), LAT = new THREE.Vector3(), LATV = new THREE.Vector3();
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 // The TANK is fixed in world space: its walls are the display edges at the DEFAULT zoom, per depth
 // (closer to the camera = narrower), minus the fish's half-length so the nose can reach the very edge.
 // Zoom = the FISH's size (camera never moves), so at any zoom the walls stay at the screen edges and a
 // bigger fish still swims right up to them; clearance, speed and arrival distance scale with it.
 const CAM0 = 10, TANK_NEAR = 2.0, TANK_FAR = -6.0, HALF_LEN = 0.45;   // tank depth 8 (2× the old ±2): room to swim away from the viewer   // small centre clearance: the BODY collision (wallCollide) does the real work
-let ZOOM = 1, zoomTo = 1, zoomT = -1e9;
-function walls(z) {
+let ZOOM = 1, ZG = 1, zoomTo = 1, zoomT = -1e9;
+const _W1 = { x: 0, y: 0 }, _W2 = { x: 0, y: 0 }, _eo = { x: 0, y: 0 };   // scratch results (no per-call objects)
+function walls(z, o = _W1) {
   const hh = (CAM0 - z) * Math.tan(cam.fov * D2R / 2), hw = hh * cam.aspect;
-  return { x: Math.max(0.3, hw - HALF_LEN * ZOOM), y: Math.max(0.3, hh - HALF_LEN * 0.7 * ZOOM) };
+  o.x = Math.max(0.3, hw - HALF_LEN * ZOOM); o.y = Math.max(0.3, hh - HALF_LEN * 0.7 * ZOOM); return o;
 }
 // ghost tank: the fish-centre volume drawn as a wireframe while zooming, fading out after
 const ghostGeo = new THREE.BufferGeometry(), ghostMat = new THREE.LineBasicMaterial({ color: 0x5fd4ff, transparent: true, opacity: 0, depthWrite: false });
@@ -255,91 +467,103 @@ function updateGhost(t) {
 }
 function pickTarget(t) {
   const tz = TANK_FAR * 0.85 + Math.random() * (TANK_NEAR * 0.6 - TANK_FAR * 0.85), b = walls(tz);   // depth first, then the walls AT that depth
-  TGT.set((Math.random() * 2 - 1) * b.x * 0.95, (Math.random() * 2 - 1) * b.y * 0.85, tz);   // anywhere in the tank, edges included
-  wallTgt = Math.random() < 0.4;                          // ~40%: swim right up to a wall and brush along it
-  if (wallTgt) { const wz = walls(TGT.z); if (Math.random() < 0.6) TGT.x = Math.sign(TGT.x || 1) * wz.x * 1.25; else TGT.y = Math.sign(TGT.y || 1) * wz.y * 1.25; nextPick = t + 9; }
-  tSpeed = (0.55 + Math.random() * 1.0) * SPEEDK;                   // dawdle ↔ cruise
-  nextPick = t + 5 + Math.random() * 7;
+  F.TGT.set((Math.random() * 2 - 1) * b.x * 0.95, (Math.random() * 2 - 1) * b.y * 0.85, tz);   // anywhere in the tank, edges included
+  F.wallTgt = Math.random() < 0.4;                          // ~40%: swim right up to a wall and brush along it
+  if (F.wallTgt) { const wz = walls(F.TGT.z, _W2); if (Math.random() < 0.6) F.TGT.x = Math.sign(F.TGT.x || 1) * wz.x * 1.25; else F.TGT.y = Math.sign(F.TGT.y || 1) * wz.y * 1.25; F.nextPick = t + 9; }
+  F.tSpeed = (0.55 + Math.random() * 1.0) * F.SPEEDK;                   // dawdle ↔ cruise
+  F.nextPick = t + 5 + Math.random() * 7;
+}
+// soft mutual avoidance: every other fish closer than R (3D, scales with the fish size) adds a repulsion to the DESIRED heading only (weight up to 0.9 of a unit aim, falling linearly to 0 at R)
+// -> the fish veer off through their normal steering (bend, yaw inertia); nothing is pushed or snapped. No effect with one fish.
+const _sd = new THREE.Vector3();
+function separate() {
+  const R = 1.9 * ZOOM;
+  for (const o of FISH) {
+    if (o === F) continue;
+    _sd.copy(F.P).sub(o.P); const d = _sd.length(); if (d >= R || d < 1e-4) continue;
+    DES.addScaledVector(_sd, (1 - d / R) * 0.9 / d);
+  }
 }
 function wander(dt, t) {
-  ZOOM += (zoomTo - ZOOM) * (1 - Math.exp(-dt * 8)); outer.scale.setScalar(ZOOM); updateGhost(t);
+  F.outer.scale.setScalar(ZOOM);   // (the zoom easing + ghost run once per frame in loop(): stepZoom)
   const M = Math.pow(ZOOM, 1.5);                        // mass grows with size: slower beats, more inertia, longer glides
-  const reached = wallTgt ? (atWall && t - wallSince > 0.8) : P.distanceTo(TGT) < 0.9 * ZOOM;   // a wall target = touch the wall and brush it ~1s
-  if (reached || t > nextPick) pickTarget(t);
-  DES.copy(TGT).sub(P).normalize();
+  const reached = F.wallTgt ? (F.atWall && t - F.wallSince > 0.8) : F.P.distanceTo(F.TGT) < 0.9 * ZOOM;   // a wall target = touch the wall and brush it ~1s
+  if (reached || t > F.nextPick) pickTarget(t);
+  DES.copy(F.TGT).sub(F.P).normalize();
   // walls: look ahead; near a wall, cancel the outward part of the aim and push gently inward
   // → the fish curves along the wall and brushes it instead of reversing in open water
-  const w = walls(P.z), LA = 0.25 + speed * 0.25; let out = false;   // short look-ahead: swim right up to the wall
-  for (const a of ["x", "y", "z"]) {
-    const ahead = P[a] + V[a] * LA;
+  const w = walls(F.P.z), LA = 0.25 + F.speed * 0.25; let out = false;   // short look-ahead: swim right up to the wall
+  for (const a of AXES) {
+    const ahead = F.P[a] + F.V[a] * LA;
     const sg = a === "z" ? (ahead > (TANK_NEAR + TANK_FAR) / 2 ? 1 : -1) : (Math.sign(ahead) || 1);
     const over = a === "z" ? (sg > 0 ? ahead - TANK_NEAR : TANK_FAR - ahead) : Math.abs(ahead) - w[a];
-    if (over > 0 && !(wallTgt && a !== "z" && Math.sign(TGT[a]) === sg && Math.abs(TGT[a]) > w[a])) {   // (a wall target: let it drive in and ram)
+    if (over > 0 && !(F.wallTgt && a !== "z" && Math.sign(F.TGT[a]) === sg && Math.abs(F.TGT[a]) > w[a])) {   // (a wall target: let it drive in and ram)
       out = true;
       if (DES[a] * sg > 0) DES[a] = -DES[a] * 0.25;
       DES[a] -= sg * clamp(over / LA, 0, 1) * 0.35;
     }
   }
+  if (FISH.length > 1) separate();                      // several fish: steer softly away from the others
   DES.normalize();
-  const yLim = wallTgt && Math.abs(TGT.y) > Math.abs(TGT.x) * 0.5 ? 0.5 : 0.3;   // allow a steeper climb/dive when heading for the top/bottom wall
+  const yLim = F.wallTgt && Math.abs(F.TGT.y) > Math.abs(F.TGT.x) * 0.5 ? 0.5 : 0.3;   // allow a steeper climb/dive when heading for the top/bottom wall
   DES.y = clamp(DES.y, -yLim, yLim); DES.z = clamp(DES.z, -0.5, 0.5); DES.normalize();
-  DES.y -= pressY * 0.6; DES.normalize();                // pressed on the top/bottom glass: tip away from it   // aim mostly level + side-on
+  DES.y -= F.pressY * 0.6; DES.normalize();                // pressed on the top/bottom glass: tip away from it   // aim mostly level + side-on
 
   // ---- intent → body → heading (mass + water) ------------------------------------------------
   // The fish decides first: the yaw it WANTS (angle to the aim, in its own body frame) bends the body
   // and starts a stroke right away. That bend is the torque; the heading only follows through angular
   // inertia damped by the water — so fins/tail visibly lead the turn, and the turn carries through.
-  PRV.copy(V);
-  LAT.crossVectors(UPV, V).normalize();                   // body's lateral axis (= outer local +X)
-  const want = Math.atan2(DES.dot(LAT), DES.dot(V));      // signed yaw still wanted (−π..π)
-  const intent = clamp(want / 1.1, -1, 1); INTENT = intent;
+  PRV.copy(F.V);
+  LAT.crossVectors(UPV, F.V).normalize();                   // body's lateral axis (= outer local +X)
+  const want = Math.atan2(DES.dot(LAT), DES.dot(F.V));      // signed yaw still wanted (−π..π)
+  const intent = clamp(want / 1.1, -1, 1); F.INTENT = intent;
   // gait: a wanted turn starts a stroke early (prep stroke); every glide lasts ≥0.4s
-  if (gait === "coast" && (t > gaitEnd || ((Math.abs(intent) > 0.55 || Math.abs(V.z) > 0.7) && t > coastStart + 0.4))) {
-    gait = "burst"; omega = 2 * Math.PI * clamp(1.3 + 1.1 * tSpeed + 0.9 * Math.abs(intent), 1.5, 3.5) * RATE / Math.sqrt(ZOOM);   // 1.5–3.5 beats/s, slower for a bigger fish
-    gaitEnd = t + (2 + Math.floor(Math.random() * 3)) * (2 * Math.PI / omega);
-  } else if (gait === "burst" && t > gaitEnd) {
-    gait = "coast"; coastStart = t; gaitEnd = t + GLIDE * (0.6 + Math.random() * (tSpeed < 0.9 ? 1.4 : 0.8));
+  if (F.gait === "coast" && (t > F.gaitEnd || ((Math.abs(intent) > 0.55 || Math.abs(F.V.z) > 0.7) && t > F.coastStart + 0.4))) {
+    F.gait = "burst"; F.omega = 2 * Math.PI * clamp(1.3 + 1.1 * F.tSpeed + 0.9 * Math.abs(intent), 1.5, 3.5) * F.RATE / Math.sqrt(ZOOM);   // 1.5–3.5 beats/s, slower for a bigger fish
+    F.gaitEnd = t + (2 + Math.floor(Math.random() * 3)) * (2 * Math.PI / F.omega);
+  } else if (F.gait === "burst" && t > F.gaitEnd) {
+    F.gait = "coast"; F.coastStart = t; F.gaitEnd = t + F.GLIDE * (0.6 + Math.random() * (F.tSpeed < 0.9 ? 1.4 : 0.8));
   }
-  beat += ((gait === "burst" ? 1 : 0.06) - beat) * (1 - Math.exp(-dt * (gait === "burst" ? 8 : 3.5)));
+  F.beat += ((F.gait === "burst" ? 1 : 0.06) - F.beat) * (1 - Math.exp(-dt * (F.gait === "burst" ? 8 : 3.5)));
   // body bend: LEADS with intent, then also holds while the body is still rotating
   // wall pressure joins in: the body curves AWAY from the glass (nose + tail away, mid-body riding along
   // it), up to ~1.8× the normal bend — flexing round the wall instead of being shoved off it rigidly
   // ramming the glass: a wall doesn't give like water, so momentum INTO it folds the body further
   // (up to ~2.6× a normal turn) until the fish lies parallel and the into-wall speed is gone
-  steer += (clamp(0.7 * intent + 0.3 * yawRate / 1.6 - 1.1 * pressLat - impact * (Math.sign(pressLat) || 1), -2.6, 2.6) - steer) * (1 - Math.exp(-dt * 11));
+  F.steer += (clamp(0.7 * intent + 0.3 * F.yawRate / 1.6 - 1.1 * F.pressLat - F.impact * (Math.sign(F.pressLat) || 1), -2.6, 2.6) - F.steer) * (1 - Math.exp(-dt * 11));
   // torque from the bent body (stronger while stroking; big reversals get a hard C-stroke) vs water damping
   const kick = 1 + 0.6 * clamp((Math.abs(want) - 1.4) / 1.2, 0, 1);
-  yawRate += (7.0 * steer * (0.35 + 0.65 * beat) * kick * (out ? 1.4 : 1) - 3.4 * yawRate) * dt / M;   // angular inertia ∝ mass
-  V.applyAxisAngle(UPV, yawRate * dt);                    // +yaw turns toward LAT (+X side)
-  V.y += (DES.y - V.y) * (1 - Math.exp(-dt * 1.2)); V.y = clamp(V.y, -0.5, 0.5); V.normalize();   // pitch: slow, no bend
-  turn += (yawRate - turn) * (1 - Math.exp(-dt * 3));
+  F.yawRate += (7.0 * F.steer * (0.35 + 0.65 * F.beat) * kick * (out ? 1.4 : 1) - 3.4 * F.yawRate) * dt / M;   // angular inertia ∝ mass
+  F.V.applyAxisAngle(UPV, F.yawRate * dt);                    // +yaw turns toward LAT (+X side)
+  F.V.y += (DES.y - F.V.y) * (1 - Math.exp(-dt * 1.2)); F.V.y = clamp(F.V.y, -0.5, 0.5); F.V.normalize();   // pitch: slow, no bend
+  F.turn += (F.yawRate - F.turn) * (1 - Math.exp(-dt * 3));
 
   // ---- momentum: velocity is NOT the heading ------------------------------------------------------
   // forward = thrust (beating) vs drag; sideways slip decays (fins/body resist it) → the fish carries
   // its old line a little through a turn instead of pivoting on a rail
-  const vf = VEL.dot(V);
-  const ts = tSpeed * Math.sqrt(ZOOM);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
-  let nf = vf + (DRAG * ts * ts * beat - DRAG * vf * Math.abs(vf)) * dt * 1.6 / Math.sqrt(M);   // heavier → slower to speed up and to slow down (longer glides)
+  const vf = F.VEL.dot(F.V);
+  const ts = F.tSpeed * Math.sqrt(ZOOM);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
+  let nf = vf + (DRAG * ts * ts * F.beat - DRAG * vf * Math.abs(vf)) * dt * 1.6 / Math.sqrt(M);   // heavier → slower to speed up and to slow down (longer glides)
   nf = Math.max(nf, 0.12);
-  LATV.copy(VEL).addScaledVector(V, -vf).multiplyScalar(Math.exp(-dt * 7));
-  VEL.copy(V).multiplyScalar(nf).add(LATV);
-  speed = nf;
-  P.addScaledVector(VEL, dt);
+  LATV.copy(F.VEL).addScaledVector(F.V, -vf).multiplyScalar(Math.exp(-dt * 7));
+  F.VEL.copy(F.V).multiplyScalar(nf).add(LATV);
+  F.speed = nf;
+  F.P.addScaledVector(F.VEL, dt);
   // collision: the wall is solid — stop at it and kill the into-wall motion (brush along it)
-  const wc = walls(P.z); const wasAtWall = atWall; atWall = false;
-  ram *= Math.exp(-dt * 3);
-  for (const a of ["x", "y"]) {
-    if (Math.abs(P[a]) > wc[a] * 0.97) atWall = true;
-    if (Math.abs(P[a]) > wc[a] * 0.9 && a === "x") ram = Math.max(ram, VEL.x * Math.sign(P.x));   // approach speed into the side glass, pre-stop
-    if (Math.abs(P[a]) > wc[a]) { const sg = Math.sign(P[a]); POP.centre = Math.max(POP.centre, Math.abs(P[a]) - wc[a]); P[a] = sg * wc[a]; if (VEL[a] * sg > 0) VEL[a] = 0; }
+  const wc = walls(F.P.z, _W2); const wasAtWall = F.atWall; F.atWall = false;
+  F.ram *= Math.exp(-dt * 3);
+  for (const a of XY) {
+    if (Math.abs(F.P[a]) > wc[a] * 0.97) F.atWall = true;
+    if (Math.abs(F.P[a]) > wc[a] * 0.9 && a === "x") F.ram = Math.max(F.ram, F.VEL.x * Math.sign(F.P.x));   // approach speed into the side glass, pre-stop
+    if (Math.abs(F.P[a]) > wc[a]) { const sg = Math.sign(F.P[a]); POP.centre = Math.max(POP.centre, Math.abs(F.P[a]) - wc[a]); F.P[a] = sg * wc[a]; if (F.VEL[a] * sg > 0) F.VEL[a] = 0; }
   }
-  if (P.z > TANK_NEAR) { P.z = TANK_NEAR; if (VEL.z > 0) VEL.z = 0; } else if (P.z < TANK_FAR) { P.z = TANK_FAR; if (VEL.z < 0) VEL.z = 0; }
-  if (atWall && !wasAtWall) wallSince = t;
-  outer.position.copy(P);
-  tmp.copy(P).add(V); outer.up.set(0, 1, 0); outer.lookAt(tmp);
-  outer.rotateZ(clamp(turn * 0.2, -0.3, 0.3));           // roll into the turn
-  phase += dt * omega * (0.3 + 0.7 * beat);              // beat while stroking, slow residual while gliding
-  outer.rotateY(-Math.sin(phase) * 0.045 * beat);        // head recoil: the head yaws opposite the tail stroke
+  if (F.P.z > TANK_NEAR) { F.P.z = TANK_NEAR; if (F.VEL.z > 0) F.VEL.z = 0; } else if (F.P.z < TANK_FAR) { F.P.z = TANK_FAR; if (F.VEL.z < 0) F.VEL.z = 0; }
+  if (F.atWall && !wasAtWall) F.wallSince = t;
+  F.outer.position.copy(F.P);
+  tmp.copy(F.P).add(F.V); F.outer.up.set(0, 1, 0); F.outer.lookAt(tmp);
+  F.outer.rotateZ(clamp(F.turn * 0.2, -0.3, 0.3));           // roll into the turn
+  F.phase += dt * F.omega * (0.3 + 0.7 * F.beat);              // beat while stroking, slow residual while gliding
+  F.outer.rotateY(-Math.sin(F.phase) * 0.045 * F.beat);        // head recoil: the head yaws opposite the tail stroke
 }
 // ---- whole-body wall contact (display) ----------------------------------------------------------
 // The tank walls are the screen edges (per depth). Every bone is tested — leaf bones extended by one
@@ -347,24 +571,52 @@ function wander(dt, t) {
 // into-wall motion stops (it can't pass). Tail/fins swung into a wall → that stroke is stopped and
 // bounced back a little (the tail flattens and brushes along the glass) and the body is nudged off.
 const _bp = new THREE.Vector3(), _pp = new THREE.Vector3();
-let wallHits = 0, tailHits = 0; const POP = { rigid: 0, fin: 0, tailFallback: 0, tailReact: 0, flatten: 0, centre: 0, finClamp: 0 };   // debug: biggest jump per source since last read
-function edgeAt(z) { const hh = (CAM0 - z) * Math.tan(cam.fov * D2R / 2); return { x: hh * cam.aspect, y: hh }; }
-function rotBone(bn, a) { if (AX === "x") bn.rotateX(a); else if (AX === "y") bn.rotateY(a); else bn.rotateZ(a); }
+const POP = { rigid: 0, fin: 0, tailFallback: 0, tailReact: 0, flatten: 0, centre: 0, finClamp: 0 };   // debug: biggest jump per source since last read
+function edgeAt(z, o = _eo) { const hh = (CAM0 - z) * Math.tan(cam.fov * D2R / 2); o.x = hh * cam.aspect; o.y = hh; return o; }
+function rotBone(bn, a) { if (F.AX === "x") bn.rotateX(a); else if (F.AX === "y") bn.rotateY(a); else bn.rotateZ(a); }
 function tipOf(bn, out) {
   bn.getWorldPosition(out);
   const leaf = !bn.children.some(c => c.isBone);
   if (leaf && bn.parent && bn.parent.isBone) { bn.parent.getWorldPosition(_pp); out.multiplyScalar(2).sub(_pp); }   // extrapolate one segment → fin tip
   return out;
 }
+// HEAD SAMPLER (2026-10-12): the wall tests above use bone JOINTS, which sit inside the skin (the nose/eyes/jaw/lips stick out past the front joint) — so the head could poke out of the screen edge.
+// At load we pick ~150 skin vertices of the head (front ~24 % of the body along the swim direction, plus its lateral/vertical extremes) and test THEIR skinned world positions against the edges every frame.
+const HEADWALL = Q.get("headwall") !== "0", _ho = { l: 0, r: 0, t: 0, b: 0 };
+const _hv = new THREE.Vector3();
+function headSample() {
+  if (F.HEADS) return F.HEADS;
+  let sm = null; F.outer.traverse(n => { if (n.isSkinnedMesh && (!sm || n.geometry.attributes.position.count > sm.geometry.attributes.position.count)) sm = n; });
+  if (!sm) return { sm: null, idx: [] };   // model not loaded yet: don't cache
+  const H0 = { sm, idx: [] };
+  F.outer.updateMatrixWorld(true); sm.skeleton.update();
+  const n = sm.geometry.attributes.position.count, sc = new Float32Array(n), W = new Float32Array(n * 3), fw = F.V.clone().normalize(), up = new THREE.Vector3(0, 1, 0), lat = new THREE.Vector3().crossVectors(up, fw).normalize();
+  let lo = 1e9, hi = -1e9;
+  for (let i = 0; i < n; i++) { sm.getVertexPosition(i, _hv).applyMatrix4(sm.matrixWorld); W[i * 3] = _hv.x; W[i * 3 + 1] = _hv.y; W[i * 3 + 2] = _hv.z; sc[i] = _hv.dot(fw); if (sc[i] < lo) lo = sc[i]; if (sc[i] > hi) hi = sc[i]; }
+  const cut = hi - 0.24 * (hi - lo), head = []; for (let i = 0; i < n; i++) if (sc[i] >= cut) head.push(i);
+  const pick = new Set(), step = Math.max(1, Math.floor(head.length / 90)); for (let k = 0; k < head.length; k += step) pick.add(head[k]);
+  const ext = (f, m) => head.slice().sort((x, y) => f(y) - f(x)).slice(0, m).forEach(i => pick.add(i));
+  const co = i => new THREE.Vector3(W[i * 3], W[i * 3 + 1], W[i * 3 + 2]);
+  ext(i => sc[i], 24); ext(i => co(i).dot(lat), 20); ext(i => -co(i).dot(lat), 20); ext(i => W[i * 3 + 1], 14); ext(i => -W[i * 3 + 1], 14);
+  H0.idx = [...pick]; if (!(hi > lo) || !H0.idx.length || !isFinite(hi + lo)) return { sm: null, idx: [] };   // not posed yet: retry next frame
+  F.HEADS = H0; return F.HEADS;
+}
+function headOver(out) {   // per-edge overshoot (world units at the vertex depth, >0 = past the edge) of the sampled head vertices: out = {l, r, t, b}
+  const H = headSample(); out.l = out.r = out.t = out.b = -1e9; if (!H.sm) return out;
+  F.outer.updateMatrixWorld(true); H.sm.skeleton.update();
+  for (const i of H.idx) { H.sm.getVertexPosition(i, _hv).applyMatrix4(H.sm.matrixWorld); const e = edgeAt(_hv.z);
+    out.r = Math.max(out.r, _hv.x - e.x); out.l = Math.max(out.l, -_hv.x - e.x); out.t = Math.max(out.t, _hv.y - e.y); out.b = Math.max(out.b, -_hv.y - e.y); }
+  return out;
+}
 function wallCollide(cdt) {
-  outer.updateMatrixWorld(true);
+  F.outer.updateMatrixWorld(true);
   // three kinds of contact: RIGID head/trunk joints (can't pass → full push-back), soft front-fin tips
   // (pectoral/pelvic/dorsal tips press on the glass → gentle push), tail/rear fins (flatten, below)
   let penX = 0, sideX = 0, penY = 0, sideY = 0, tailSide = 0, finX = 0, finSX = 0, finY = 0, finSY = 0;
   // pressure: how close any part of the body is to a wall, starting a little BEFORE contact (feel the
   // glass coming) — drives the away-bend in wander() so the body flexes round the wall
   const feel = 0.45 * ZOOM; let prX = 0, prSX = 0, prY = 0, prSY = 0;
-  for (const bn of (AN.wb || (AN.wb = bones.filter(b => !b.userData.dead).concat(AN.bones.filter(b => b.userData.role === "ray" || b.userData.role === "pec" || b.userData.role === "pech"))))) {
+  for (const bn of (F.AN.wb || (F.AN.wb = F.bones.filter(b => !b.userData.dead).concat(F.AN.bones.filter(b => b.userData.role === "ray" || b.userData.role === "pec" || b.userData.role === "pech"))))) {
     tipOf(bn, _bp); const e = edgeAt(_bp.z), tw = bn.userData.tw || 0, leaf = !bn.children.some(c => c.isBone);
     const ox = Math.abs(_bp.x) - e.x, oy = Math.abs(_bp.y) - e.y;
     if (ox + feel > prX) { prX = ox + feel; prSX = Math.sign(_bp.x); }
@@ -374,42 +626,48 @@ function wallCollide(cdt) {
     if (ox > penX) { penX = ox; sideX = Math.sign(_bp.x); }
     if (oy > penY) { penY = oy; sideY = Math.sign(_bp.y); }
   }
+  if (HEADWALL) {   // the skin of the head (nose, lips, eyes, gill covers) is what must stay on screen — the joints above sit inside it
+    const HO = headOver(_ho);
+    if (HO.r + feel > prX) { prX = HO.r + feel; prSX = 1; } if (HO.l + feel > prX) { prX = HO.l + feel; prSX = -1; }
+    if (HO.t + feel > prY) { prY = HO.t + feel; prSY = 1; } if (HO.b + feel > prY) { prY = HO.b + feel; prSY = -1; }
+    if (HO.r > penX) { penX = HO.r; sideX = 1; } if (HO.l > penX) { penX = HO.l; sideX = -1; }
+    if (HO.t > penY) { penY = HO.t; sideY = 1; } if (HO.b > penY) { penY = HO.b; sideY = -1; }
+  }
   const pLat = clamp(prX / feel, 0, 1.6) * (Math.sign(LAT.x * prSX) || 1);          // + = wall on the body's +LAT side
-  pressLat += (pLat - pressLat) * (Math.abs(pLat) > Math.abs(pressLat) ? 0.35 : 0.08);  // fast to feel, slow to let go
+  F.pressLat += (pLat - F.pressLat) * (Math.abs(pLat) > Math.abs(F.pressLat) ? 0.35 : 0.08);  // fast to feel, slow to let go
   // impact: how hard the fish is driving into the side wall it's touching (approach speed ⟂ the glass)
-  const vIn = Math.max(0, ram, VEL.x * prSX) / (0.5 * Math.sqrt(ZOOM)), touch = clamp(prX / feel - 0.5, 0, 1);
+  const vIn = Math.max(0, F.ram, F.VEL.x * prSX) / (0.5 * Math.sqrt(ZOOM)), touch = clamp(prX / feel - 0.5, 0, 1);
   const imp = clamp(vIn, 0, 1.2) * touch;
-  impact += (imp - impact) * (imp > impact ? 0.5 : 0.06);      // hits fast, unfolds slowly as it turns parallel
+  F.impact += (imp - F.impact) * (imp > F.impact ? 0.5 : 0.06);      // hits fast, unfolds slowly as it turns parallel
   const pY = clamp(prY / feel, 0, 1.6) * prSY;
-  pressY += (pY - pressY) * (Math.abs(pY) > Math.abs(pressY) ? 0.35 : 0.08);
-  if (penX > 0) { POP.rigid = Math.max(POP.rigid, penX); P.x -= sideX * penX; if (VEL.x * sideX > 0) VEL.x = 0; wallHits++; }
-  if (penY > 0) { POP.rigid = Math.max(POP.rigid, penY); P.y -= sideY * penY; if (VEL.y * sideY > 0) VEL.y = 0; wallHits++; }
-  if (finX > 0) { POP.fin = Math.max(POP.fin, finX * 0.35); P.x -= finSX * finX * 0.35; if (VEL.x * finSX > 0) VEL.x *= 0.6; }   // fins pressed on the glass ease the fish off
-  if (finY > 0) { P.y -= finSY * finY * 0.35; if (VEL.y * finSY > 0) VEL.y *= 0.6; }
+  F.pressY += (pY - F.pressY) * (Math.abs(pY) > Math.abs(F.pressY) ? 0.35 : 0.08);
+  if (penX > 0) { POP.rigid = Math.max(POP.rigid, penX); F.P.x -= sideX * penX; if (F.VEL.x * sideX > 0) F.VEL.x = 0; F.wallHits++; }
+  if (penY > 0) { POP.rigid = Math.max(POP.rigid, penY); F.P.y -= sideY * penY; if (F.VEL.y * sideY > 0) F.VEL.y = 0; F.wallHits++; }
+  if (finX > 0) { POP.fin = Math.max(POP.fin, finX * 0.35); F.P.x -= finSX * finX * 0.35; if (F.VEL.x * finSX > 0) F.VEL.x *= 0.6; }   // fins pressed on the glass ease the fish off
+  if (finY > 0) { F.P.y -= finSY * finY * 0.35; if (F.VEL.y * finSY > 0) F.VEL.y *= 0.6; }
   if (tailSide) {
     // tail against the glass. NO snaps, NO teleports (both read as dropped frames): the swing driving the
     // tail into the wall is damped and eased back over a few frames, and if the tail still presses on the
     // glass (it swings INTO the wall while the fish turns away) the tail PUSHES the body off — gradually,
     // at most ~1.2 body-lengths/s, like a push-off, instead of relocating the fish in one frame
     const wallLat = Math.sign(LAT.x * tailSide) || 1;          // which body side faces that wall
-    tailHits++;
-    for (const bn of bones) {
+    F.tailHits++;
+    for (const bn of F.bones) {
       const u = bn.userData; if ((u.tw || 0) <= 0.35) continue;
-      if ((u.a || 0) * BEND_SIGN * wallLat > 0) {
-        const na = u.a * 0.7; POP.flatten = Math.max(POP.flatten, Math.abs(na - u.a)); rotBone(bn, na - u.a); u.a = na;
-        if ((u.av || 0) * BEND_SIGN * wallLat > 0) u.av *= 0.2;   // stop the swing into the glass (no bounce-snap)
+      if ((u.a || 0) * F.BEND_SIGN * wallLat > 0) {
+        const na = u.a - Math.sign(u.a) * Math.min(Math.abs(u.a) * 0.3, 0.03); POP.flatten = Math.max(POP.flatten, Math.abs(na - u.a)); rotBone(bn, na - u.a); u.a = na;
+        if ((u.av || 0) * F.BEND_SIGN * wallLat > 0) u.av *= 0.2;   // stop the swing into the glass (no bounce-snap)
       }
     }
-    outer.updateMatrixWorld(true);
+    F.outer.updateMatrixWorld(true);
     let rem = 0;
-    for (const bn of bones) { if ((bn.userData.tw || 0) <= 0.35) continue; tipOf(bn, _bp); rem = Math.max(rem, Math.abs(_bp.x) - edgeAt(_bp.z).x); }
-    if (rem > 0) {
-      const step = Math.min(rem, 1.2 * BODY_L * ZOOM * cdt);
-      POP.tailFallback = Math.max(POP.tailFallback, step);
-      P.x -= tailSide * step; if (VEL.x * tailSide > 0) VEL.x *= 0.5;
-    }
-  }
-  if (penX > 0 || penY > 0 || finX > 0 || finY > 0 || tailSide) outer.position.copy(P);
+    for (const bn of F.bones) { if ((bn.userData.tw || 0) <= 0.35) continue; tipOf(bn, _bp); rem = Math.max(rem, Math.abs(_bp.x) - edgeAt(_bp.z).x); }
+    if (rem > 0) F.PUSH.tgt = -tailSide * Math.min(rem / 0.35, 0.5 * F.BODY_L * ZOOM); else F.PUSH.tgt = 0;   // push-off VELOCITY target (reach the glass-free position in ~0.35 s, ≤0.5 BL/s)
+  } else F.PUSH.tgt = 0;
+  // the push-off is a velocity that ramps in and out (τ 0.18 s), never a per-frame position shove: no sudden relocation when the tail meets the glass
+  F.PUSH.v += (F.PUSH.tgt - F.PUSH.v) * (1 - Math.exp(-cdt / 0.18));
+  if (Math.abs(F.PUSH.v) > 1e-5) { POP.tailFallback = Math.max(POP.tailFallback, Math.abs(F.PUSH.v) * cdt); F.P.x += F.PUSH.v * cdt; if (F.VEL.x * F.PUSH.v < 0) F.VEL.x *= Math.exp(-cdt * 3); F.outer.position.copy(F.P); }
+  if (penX > 0 || penY > 0 || finX > 0 || finY > 0 || tailSide) F.outer.position.copy(F.P);
 }
 
 // ---- fins: passive rays bending in water (display) -------------------------------------------------
@@ -418,66 +676,80 @@ function wallCollide(cdt) {
 // through still water → drag (linear viscous + quadratic pressure) perpendicular to the ray → torque
 // on its joint → damped torsional spring (softer toward the tip, under-damped so it overshoots and
 // ripples). Dorsal/anal fins also carry a small travelling wave lagging the body wave.
-const VEIL = { acc: 0, sp: 0, spr: 0 };
-const FINS = [], CH = {}, NB = {}; let BODY_L = 1;
-const IN_PLANE = 0.07, CUM_BEND = Q.has("cum") ? +Q.get("cum") : (PRE.cum != null ? PRE.cum : 0.5), COUPLE = Q.has("couple") ? +Q.get("couple") : 30;   // rigged sheets: max in-plane bend per joint (rad), max cumulative root→tip bend per chain (0.5 rad ≈ 29°), fan-coupling rate (1/s)
-const _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _qf = new THREE.Quaternion(), _qw = new THREE.Quaternion();
+const WALLSOFT = Q.get("wallsoft") !== "0", WALLK = Q.has("wallk") ? +Q.get("wallk") : 1.7, WALLMU = Q.has("wallmu") ? +Q.get("wallmu") : 1.5;   // soft wall contact of fin/tail rays (both fish): torque gain (×joint stiffness per unit of normalised depth), tangential friction
+const _wl = new THREE.Vector3(), _wn = new THREE.Vector3(), _wa = new THREE.Vector3();
+const IN_PLANE = 0.07, COUPLE = Q.has("couple") ? +Q.get("couple") : 30;   // rigged sheets: max in-plane bend per joint (rad), fan-coupling rate (1/s); the max cumulative bend per chain is F.CUM_BEND (per species)
+const _seg = new THREE.Vector3(), _qb = new THREE.Quaternion(), _qr = new THREE.Quaternion(), _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _qf = new THREE.Quaternion(), _qw = new THREE.Quaternion();
 function spreadSign(ch) {   // + rotation about the chain's in-plane axis moves the tip away from the tail axis (spreading the veil)
   const M = new THREE.Vector3(0, 0, -1), perp = ch.dir.clone().addScaledVector(M, -ch.dir.dot(M)), mv = new THREE.Vector3().crossVectors(ch.nrm, ch.dir);
   return Math.sign(mv.dot(perp)) || 1;
 }
 function setupFins() {
-  if (RIG) {   // procedural rig: roles are explicit. Every tail/fin bone is a drag-driven damped spring tracking its CHILD joint (leaf: one extrapolated segment) + a travelling ripple about the sheet normal.
-    let tip = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
-    outer.updateMatrixWorld(true);
-    let head = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
-    BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
-    for (const bn of bones) {
+  if (F.RIG) {   // procedural rig: roles are explicit. Every tail/fin bone is a drag-driven damped spring tracking its CHILD joint (leaf: one extrapolated segment) + a travelling ripple about the sheet normal.
+    let tip = F.bones[0]; for (const bn of F.bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
+    F.outer.updateMatrixWorld(true);
+    let head = F.bones[0]; for (const bn of F.bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
+    F.BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
+    for (const bn of F.bones) {
       const u = bn.userData; if (u.role !== "tail" && u.role !== "fin") continue;
-      const d = u.d, leaf = !bn.children.some(c => c.isBone), tailV = u.role === "tail", k = tailV ? (leaf ? 0.7 : 1) * 60 * FK * AT("vk", 1) * Math.pow(AT("vdk", 0.5), d) : (leaf ? 20 : 42) * FK / (1 + 0.25 * d);   // soft + longer-lagging than the betta (FK<1); stiffer toward the root
-      FINS.push({ bn, tipB: bn.children.find(c => c.isBone) || null, k, c: 2 * Math.sqrt(k) * FZ * (tailV ? 1 - 0.55 * d / 3 : 1), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: 0, rig: true, tailV, spr: tailV ? spreadSign(RIG.chains[u.chain]) : 0, dc: 1.6, ci: u.chain, dd: d, dl: RIG.chains[u.chain].dir, nl: RIG.chains[u.chain].nrm, rl: RIG.chains[u.chain].rax, g: TUNE("fg"), mx: TUNE("fmax") * ((tailV ? 0.2 : 0.35) + (tailV ? 0.8 : 0.65) * d / Math.max(1, (u.role === "tail" ? 3 : 2))),   // joint limit grows root→tip (the root joints sit on the body: keep the seam from shearing)
-       rax: u.rax, rip: (u.rip || 0) * RIP, lag: u.lag || 0, role: u.role });
+      const d = u.d, leaf = !bn.children.some(c => c.isBone), tailV = u.role === "tail", k = tailV ? (leaf ? 0.7 : 1) * 60 * F.FK * AT("vk", 1) * Math.pow(AT("vdk", 0.5), d) : (leaf ? 20 : 42) * F.FK / (1 + 0.25 * d);   // soft + longer-lagging than the betta (FK<1); stiffer toward the root
+      F.FINS.push({ bn, tipB: bn.children.find(c => c.isBone) || null, k, c: 2 * Math.sqrt(k) * F.FZ * (tailV ? 1 - 0.55 * d / 3 : 1), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: 0, rig: true, tailV, spr: tailV ? spreadSign(F.RIG.chains[u.chain]) : 0, dc: 1.6, ci: u.chain, dd: d, dl: F.RIG.chains[u.chain].dir, nl: F.RIG.chains[u.chain].nrm, rl: F.RIG.chains[u.chain].rax, g: TUNE("fg"), mx: TUNE("fmax") * ((tailV ? 0.2 : 0.35) + (tailV ? 0.8 : 0.65) * d / Math.max(1, (u.role === "tail" ? 3 : 2))),   // joint limit grows root→tip (the root joints sit on the body: keep the seam from shearing)
+       rax: u.rax, rip: (u.rip || 0) * F.RIP, lag: u.lag || 0, role: u.role });
     }
     // fan coupling: each tail chain's two angularly-nearest tail chains; CH[c][d] = that chain's fin at joint level d
-    for (const f of FINS) (CH[f.ci] || (CH[f.ci] = []))[f.dd] = f;
-    const tails = RIG.chains.filter(c => c.kind === "tail");
-    for (const c of tails) NB[c.ci] = tails.filter(o => o !== c).sort((a, b) => c.dir.angleTo(a.dir) - c.dir.angleTo(b.dir)).slice(0, 2).map(o => o.ci);
+    for (const f of F.FINS) (F.CH[f.ci] || (F.CH[f.ci] = []))[f.dd] = f;
+    const tails = F.RIG.chains.filter(c => c.kind === "tail");
+    for (const c of tails) F.NB[c.ci] = tails.filter(o => o !== c).sort((a, b) => c.dir.angleTo(a.dir) - c.dir.angleTo(b.dir)).slice(0, 2).map(o => o.ci);
     return;
   }
-  let tip = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
+  let tip = F.bones[0]; for (const bn of F.bones) if ((bn.userData.tw || 0) > (tip.userData.tw || 0)) tip = bn;
   const spine = new Set(); for (let b = tip.parent; b && b.isBone; b = b.parent) if ((b.userData.tw || 0) < 0.66) spine.add(b);
-  outer.updateMatrixWorld(true);
-  let head = bones[0]; for (const bn of bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
-  BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
-  SPINE_SET = spine;
+  F.outer.updateMatrixWorld(true);
+  let head = F.bones[0]; for (const bn of F.bones) if ((bn.userData.tw || 0) < (head.userData.tw || 0)) head = bn;
+  F.BODY_L = head.getWorldPosition(_ta).distanceTo(tip.getWorldPosition(_tb)) || 1;
+  F.SPINE_SET = spine;
   const depth = b => { let d = 0; for (let p = b.parent; p && p.isBone && !spine.has(p); p = p.parent) d++; return d; };
-  for (const bn of bones) {
+  for (const bn of F.bones) {
     if (spine.has(bn) || !bn.parent || !bn.parent.isBone || (bn.userData.tw || 0) < 0.1 || bn.userData.own || bn.userData.dead) continue;   // (jaw/gill bones at the head: not fins)
     const d = depth(bn), leaf = !bn.children.some(c => c.isBone), tw = bn.userData.tw || 0;
     const tailV = tw > 0.72 && !Q.has("noveil");             // caudal veil: much softer, falling ~0.5× per joint toward the edge, low damping on the outer joints (gauze)
-    const k = tailV ? (leaf ? 0.7 : 1) * 34 * AT("vk", 1) * Math.pow(AT("vdk", 0.55), d) : (leaf ? 20 : 42) / (1 + 0.35 * d);              // stiff near the base, soft at the tips
+    const k = tailV ? (leaf ? 0.7 : 1) * 34 * AT("vk", 1) * Math.pow(AT("vdk", 0.55), d) : (leaf ? 20 : 42) / (1 + 0.35 * d) * (tailV ? 1 : AT("lfk", 1));              // stiff near the base, soft at the tips (lfk: betta flow only)
     const dorsalAnal = tw > 0.35 && tw < 0.7;
-    FINS.push({ bn, k, c: 2 * Math.sqrt(k) * (tailV ? 0.26 * (1 - 0.5 * d / 3) : 0.24), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5, tailV, g: tailV ? AT("vg", 0.95) : undefined, mx: tailV ? AT("vmax", 1.5) : undefined, dd: d });
+    F.FINS.push({ bn, k, c: 2 * Math.sqrt(k) * (tailV ? AT("vz", 0.26) * (1 - 0.5 * d / 3) : 0.24 * AT("lfz", 1)), g: tailV ? AT("vg", 0.95) : AT("lg", 0.55), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5, tailV, mx: tailV ? AT("vmax", 1.5) : undefined, dd: d });
   }
 }
 function finStep(dt) {
-  if (!FINS.length || dt <= 0) return;
-  outer.updateMatrixWorld(true);
-  const Lw = BODY_L * ZOOM;
-  for (const f of FINS) {
+  if (!F.FINS.length || dt <= 0) return;
+  F.outer.updateMatrixWorld(true);
+  const Lw = F.BODY_L * ZOOM;
+  for (const f of F.FINS) {
     const bn = f.bn; if (f.tipB) f.tipB.getWorldPosition(_ta); else tipOf(bn, _ta);
     if (!f.prev) { f.prev = _ta.clone(); continue; }
     _u.copy(f.prev).sub(_ta).divideScalar(dt * Lw);         // water velocity relative to the ray tip, in body-lengths/s
     f.prev.copy(_ta);
-    bn.getWorldPosition(_tb); const seg = _ta.clone().sub(_tb); const sl = seg.length() || 1e-6; seg.divideScalar(sl);
+    bn.getWorldPosition(_tb); const seg = _seg.copy(_ta).sub(_tb); const sl = seg.length() || 1e-6; seg.divideScalar(sl);
     _u.addScaledVector(seg, -_u.dot(seg));                  // only flow ACROSS the ray loads it
+    // SOFT WALL CONTACT (2026-10-12): a ray tip entering the screen-edge wall (or its soft margin) is pushed back in by a torque on its joint (no snap: the joint's own spring + damping make it a smooth bend,
+    // growing with depth into the wall, strongest toward the tip) and drags along the glass (tangential friction through the same drag path), then springs back fluidly when it leaves
+    let wTq = 0; _wl.set(0, 0, 0);
+    if (WALLSOFT && DISPLAY) {
+      const e = edgeAt(_ta.z), soft = 0.08 * Lw, rng = 0.2 * Lw;
+      for (const ax of XY) {
+        const pen = Math.abs(_ta[ax]) - e[ax] + soft; if (pen <= 0) continue;
+        const sg = Math.sign(_ta[ax]), c = Math.min(pen / rng, 1.5); _wn.set(0, 0, 0); _wn[ax] = -sg;
+        _wa.crossVectors(seg, _wn); _wl.addScaledVector(_wa, c * (0.3 + 0.7 * ((f.dd || 0) / Math.max(1, f.tailV ? 3 : 2))));
+        const un0 = _u[ax]; _u[ax] = 0; _u.multiplyScalar(1 + WALLMU * Math.min(c, 1)); _u[ax] = un0;   // friction: tangential flow ×(1+μc) (normal part untouched)
+        wTq = 1;
+      }
+    }
     const un = _u.length(), drag = un + 0.6 * un * un;     // viscous + pressure drag
     _ax.crossVectors(seg, _u); if (_ax.lengthSq() > 1e-12) _ax.normalize();
     bn.getWorldQuaternion(_qw).invert(); _ax.applyQuaternion(_qw);    // world torque axis → bone-local
     const T = (f.g || 0.55) * f.k * Math.min(drag, f.dc || 3);              // torque (normalised: ~1 BL/s cross-flow ≈ 0.5 rad of sweep)
+    if (wTq) { _wl.applyQuaternion(_qw); _ax.multiplyScalar(T).addScaledVector(_wl, WALLK * f.k); } else _ax.multiplyScalar(T);   // _ax now = full torque vector (drag + wall contact), bone-local
     for (let n = Math.ceil(dt / 0.006), h = dt / n; n > 0; n--) {
       const t2 = f.th.lengthSq(), ks = f.k * (1 + t2 / 0.36);   // progressive stiffening: a ray gets stiffer the more it's bent (soft limit, no kink)
-      f.om.x += (T * _ax.x - ks * f.th.x - f.c * f.om.x) * h; f.om.y += (T * _ax.y - ks * f.th.y - f.c * f.om.y) * h; f.om.z += (T * _ax.z - ks * f.th.z - f.c * f.om.z) * h;
+      f.om.x += (_ax.x - ks * f.th.x - f.c * f.om.x) * h; f.om.y += (_ax.y - ks * f.th.y - f.c * f.om.y) * h; f.om.z += (_ax.z - ks * f.th.z - f.c * f.om.z) * h;
       f.th.addScaledVector(f.om, h);
     }
     if (f.rig) {   // sheet constraints: NO roll about the chain's own axis; in-plane bend (fan spreading) tiny; across-sheet bend free up to the joint limit
@@ -488,28 +760,28 @@ function finStep(dt) {
     const MXA = f.mx || 1.1, a = f.th.length(); if (!f.rig) if (a > MXA) { POP.finClamp = Math.max(POP.finClamp, a - MXA); f.th.multiplyScalar(MXA / a); f.om.multiplyScalar(0.5); }   // safety only
     if (f.rig) continue;                                   // rigged: coupled, clamped and applied below
     if (a > 1e-5) { _qf.setFromAxisAngle(_tb.copy(f.th).normalize(), Math.min(a, MXA)); bn.quaternion.multiply(_qf); }
-    if (f.ripple) rotBone(bn, Math.sin(phase - f.lag) * f.ripple * (0.4 + 0.6 * beat));   // travelling ripple, lagging the body wave
-    if (f.tailV) rotBone(bn, Math.sin(phase - f.lag) * AT("vrip", 0.06) * (0.3 + 0.7 * beat) + AT("vfl", 0.05) * (0.2 + clamp(speed, 0, 2)) * Math.min(1, f.dd / 2) * wrnd(performance.now() / 1000 + 0.07 * f.lag, f.lag * 5));   // veil: travelling ripple base→edge + fine speed-scaled flutter on the free edge
+    if (f.ripple) rotBone(bn, Math.sin(F.phase - f.lag) * f.ripple * (0.4 + 0.6 * F.beat));   // travelling ripple, lagging the body wave
+    if (f.tailV) rotBone(bn, Math.sin(F.phase - f.lag) * AT("vrip", 0.06) * (0.3 + 0.7 * F.beat) + AT("vfl", 0.05) * (0.2 + clamp(F.speed, 0, 2)) * Math.min(1, f.dd / 2) * wrnd(performance.now() / 1000 + 0.07 * f.lag, f.lag * 5));   // veil: travelling ripple base→edge + fine speed-scaled flutter on the free edge
   }
-  if (!RIG) return;
+  if (!F.RIG) return;
   // rigged tail/fins, pass 2: (a) fan coupling — each tail chain's across-sheet bend is pulled toward its neighbours' at the same joint level, so lobes spread/fold together and can't cross;
   // (b) cumulative root→tip bend per chain capped (CUM_BEND); (c) apply bend (across-sheet about rl, in-plane about nl) + a small out-of-plane flutter. No rotation about the chain axis anywhere.
   const kc = 1 - Math.exp(-dt * COUPLE);
-  for (const c in NB) { const mine = CH[c]; if (!mine) continue;
-    for (let d = 0; d < mine.length; d++) { const f = mine[d]; let m = 0, mo = 0, n = 0; for (const o of NB[c]) { const g = CH[o] && CH[o][d]; if (g) { m += g.th.dot(g.rl); mo += g.om.dot(g.rl); n++; } }
+  for (const c in F.NB) { const mine = F.CH[c]; if (!mine) continue;
+    for (let d = 0; d < mine.length; d++) { const f = mine[d]; let m = 0, mo = 0, n = 0; for (const o of F.NB[c]) { const g = F.CH[o] && F.CH[o][d]; if (g) { m += g.th.dot(g.rl); mo += g.om.dot(g.rl); n++; } }
       if (n) { f.th.addScaledVector(f.rl, (m / n - f.th.dot(f.rl)) * kc); f.om.addScaledVector(f.rl, (mo / n - f.om.dot(f.rl)) * kc); } } }
-  for (const c in CH) { const ch = CH[c]; let cum = 0; for (const f of ch) cum += Math.abs(f.th.dot(f.rl)); if (cum > CUM_BEND) { const k = CUM_BEND / cum; for (const f of ch) { f.th.multiplyScalar(k); f.om.multiplyScalar(k); } } }
+  for (const c in F.CH) { const ch = F.CH[c]; let cum = 0; for (const f of ch) cum += Math.abs(f.th.dot(f.rl)); if (cum > F.CUM_BEND) { const k = F.CUM_BEND / cum; for (const f of ch) { f.th.multiplyScalar(k); f.om.multiplyScalar(k); } } }
   // veil (tail aft of the peduncle): fan spread/narrow with along-track acceleration (accelerating → the veil streams back and narrows; braking/turning → it billows forward and spreads), fine flutter on the free edge
   const VSPR = AT("vspr", 0), VFL = AT("vfl", 0), tnow = performance.now() / 1000;
-  VEIL.acc += ((DISPLAY ? (speed - VEIL.sp) / dt : 0) - VEIL.acc) * (1 - Math.exp(-dt / 0.15)); VEIL.sp = speed;
-  VEIL.spr += (clamp(-0.9 * VEIL.acc + 0.25 * Math.abs(steer), -0.6, 0.9) * VSPR - VEIL.spr) * (1 - Math.exp(-dt * 5));
-  for (const f of FINS) {
+  F.VEIL.acc += ((DISPLAY ? (F.speed - F.VEIL.sp) / dt : 0) - F.VEIL.acc) * (1 - Math.exp(-dt / 0.15)); F.VEIL.sp = F.speed;
+  F.VEIL.spr += (clamp(-0.9 * F.VEIL.acc + 0.25 * Math.abs(F.steer), -0.6, 0.9) * VSPR - F.VEIL.spr) * (1 - Math.exp(-dt * 5));
+  for (const f of F.FINS) {
     const ar = f.th.dot(f.rl), an = f.th.dot(f.nl), dn = f.dd / 3;
-    const fl = f.tailV ? VFL * (0.2 + clamp(speed, 0, 2)) * dn * wrnd(tnow + 0.11 * f.ci, f.ci * 4 + f.dd) : 0;
-    const qb = f.bn.quaternion.clone().multiply(_qf.setFromAxisAngle(f.rl, ar + fl + Math.sin(phase - f.lag) * f.rip * (0.25 + 0.75 * beat)));
-    const an2 = an + (f.tailV ? f.spr * VEIL.spr * (0.15 + 0.85 * dn) : 0);
+    const fl = f.tailV ? VFL * (0.2 + clamp(F.speed, 0, 2)) * dn * wrnd(tnow + 0.11 * f.ci, f.ci * 4 + f.dd) : 0;
+    const qb = _qb.copy(f.bn.quaternion).multiply(_qf.setFromAxisAngle(f.rl, ar + fl + Math.sin(F.phase - f.lag) * f.rip * (0.25 + 0.75 * F.beat)));
+    const an2 = an + (f.tailV ? f.spr * F.VEIL.spr * (0.15 + 0.85 * dn) : 0);
     if (Math.abs(an2) > 1e-5) qb.multiply(_qf.setFromAxisAngle(f.nl, an2));
-    if (f.tailV) { const rr = f.bn.userData.q0.clone().invert().multiply(qb), tw = rr.x * f.dl.x + rr.y * f.dl.y + rr.z * f.dl.z, tl = Math.hypot(tw, rr.w);   // swing-twist: strip the roll about the chain axis that two perpendicular bends compose into
+    if (f.tailV) { const rr = _qr.copy(f.bn.userData.q0).invert().multiply(qb), tw = rr.x * f.dl.x + rr.y * f.dl.y + rr.z * f.dl.z, tl = Math.hypot(tw, rr.w);   // swing-twist: strip the roll about the chain axis that two perpendicular bends compose into
       if (tl > 1e-6) { _qw.set(f.dl.x * tw / tl, f.dl.y * tw / tl, f.dl.z * tw / tl, rr.w / tl); qb.copy(f.bn.userData.q0).multiply(rr.multiply(_qw.invert())); } }
     f.bn.quaternion.copy(qb);
   }
@@ -530,7 +802,6 @@ const GF = {
   tail: [[0.465, 0.34, -0.815, 0.94], [0.26, 0.725, -0.635, 0.93], [0.45, -0.53, -0.72, 0.91], [0.335, -0.855, -0.405, 0.80]],   // [dx,dy,dz,len] for +x; mirrored for −x
   fins: []   // (generated by gfFins(): dorsal + anal RAYS (own travelling-wave chains) and the pectoral fans)
 };
-let RIG = null;
 function rigGoldfish(root) {
   let mesh = null; root.traverse(n => { if (n.isMesh && !mesh) mesh = n; });
   if (!mesh) return;
@@ -612,7 +883,7 @@ function rigGoldfish(root) {
   const sm = new THREE.SkinnedMesh(geo, mesh.material); sm.name = mesh.name || "goldfish"; sm.frustumCulled = false;
   const par = mesh.parent; par.remove(mesh); par.add(sm); sm.add(bs[0]); root.updateMatrixWorld(true);
   sm.bind(new THREE.Skeleton(bs));
-  RIG = { sm, bs, chains, region, defs, rest: null };
+  F.RIG = { sm, bs, chains, region, defs, rest: null };
   anatGoldfish(root, sm, bs);
   if (Q.get("partvis") === "1" && geo.attributes._part) partVis(sm);
   if (Q.get("rigvis") === "1") {   // ?rigvis=1: colour each vertex by its dominant bone (hue per bone) — weight sanity check
@@ -630,9 +901,8 @@ function rigGoldfish(root) {
 //   gills    opercula flare 4–10° about a front-upper hinge ~70/min calm → ~120/min with effort; lower jaw opens in counter-phase (opercula lag the mouth by ~0.4 cycle)
 //   pectoral rowing stroke: backward power stroke spread, forward recovery ~50% folded + feathered; alternate at hover, sync-forward braking, outer fin beats/inner holds in turns; outer rays trail
 //   dorsal/anal  per-ray chains driven by a travelling wave front→back (phase step/ray), followers softer by 0.5×/joint (damped springs), water-drag bend, speed-scaled flutter on the free edge; bend only (no roll), neighbour coupling, capped cumulative bend
-const AT = (k, d) => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : d));
+const AT = (k, d) => (Q.has(k) ? +Q.get(k) : (F.PRE[k] != null ? F.PRE[k] : d));
 let POSE = false;   // ?debug=1 __pose(true): fish frozen at rest at the origin (body wave, eyes, clip, anat curves off) for the mouth/gill tests
-const AN = { eyes: [], ops: [], jaw: null, pecs: [], rays: [], bones: [], own: [], ready: false, S: null };
 const AXV = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
 const ss01 = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 const _qa = new THREE.Quaternion();
@@ -699,7 +969,7 @@ function anatVis(meshes) {   // ?anatvis=1: colour = which anatomy bone owns the
 const gaussRay = (p, A, D, len, sigma) => { const v = _va.copy(p).sub(A), t = clamp(v.dot(D) / len, 0, 1), d2 = v.addScaledVector(D, -t * len).lengthSq(); return [Math.exp(-d2 / (sigma * sigma)) + 1e-7 / (1 + d2 * 400), t]; };
 const _va = new THREE.Vector3();
 // register the anat bones' q0 (rest) now, since they join the scene after the legacy q0 pass would otherwise miss them
-function finishAnat(bs) { for (const b of bs) { b.userData.q0 = b.quaternion.clone(); b.userData.p0 = b.position.clone(); AN.bones.push(b); } }
+function finishAnat(bs) { for (const b of bs) { b.userData.q0 = b.quaternion.clone(); b.userData.p0 = b.position.clone(); F.AN.bones.push(b); } }
 // ray chain record: bones root→tip, dir/normal/bend axis in root frame
 function mkRay(group, k, bonesArr, base, tip, n) {
   const d = tip.clone().sub(base), len = d.length(); d.divideScalar(len); const a = new THREE.Vector3().crossVectors(d, n).normalize();
@@ -728,7 +998,7 @@ function mouthBones(sm, head, nb, ops, MR) {
     mx[k] = mkBone("max" + k, head, at(MR.M[k]), "max", { side: sg, skipWall: true, rigTw: 0.03 });
     op[k] = mkBone("op" + k, head, at(MR.H0[k]), "op", { side: sg, skipWall: true, rigTw: 0.03 }); op[k].userData.ax[1] = new V3(0, -sg, 0);       // positive = trailing edge out
     br[k] = mkBone("br" + k, head, at(MR.Br[k]), "br", { side: sg, skipWall: true, rigTw: 0.03 }); br[k].userData.ax[2] = new V3(0, 0, sg);          // positive = flap out/down
-    AN.ops.push({ bone: op[k], side: sg });
+    F.AN.ops.push({ bone: op[k], side: sg });
   }
   const all = [jaw, premax, mx.R, mx.L, op.R, op.L, br.R, br.L]; nb.push(...all);
   head.updateWorldMatrix(true, false); const hq = new THREE.Quaternion(); head.getWorldQuaternion(hq);
@@ -737,8 +1007,8 @@ function mouthBones(sm, head, nb, ops, MR) {
   ops.unshift({ set: i => {
     const p0 = pt.getX(i), p1 = pt.getY(i), w0 = wg.getX(i), w1 = wg.getY(i); if (w0 + w1 <= 1e-6) return null;   // C5: no mouth weight -> default rig weighting
     const r = []; if (p0 && w0 > 0) r.push([B[p0], w0]); if (p1 && w1 > 0) r.push([B[p1], w1]); const rest = 1 - w0 - w1; if (rest > 1e-6) r.push([0, rest]); return r; } });
-  AN.jaw = { bone: jaw };
-  AN.mouth = { rig: MR, jaw, premax, mx: [mx.R, mx.L], op: [op.R, op.L], br: [br.R, br.L], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "" };
+  F.AN.jaw = { bone: jaw };
+  F.AN.mouth = { rig: MR, jaw, premax, mx: [mx.R, mx.L], op: [op.R, op.L], br: [br.R, br.L], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "" };
 }
 const mpulse = x => { x = ((x % 1) + 1) % 1; return x < 0.35 ? ss01(0, 0.35, x) : (x < 0.85 ? 1 - ss01(0.35, 0.85, x) : 0); };   // breathing pulse over one cycle
 function mouthEvent(kind, u) {   // event profile at u = t/T in [0,1] -> { jaw (deg), premax (units), op (deg), br (deg) }
@@ -756,19 +1026,19 @@ function mouthEvent(kind, u) {   // event profile at u = t/T in [0,1] -> { jaw (
 }
 const MEV = { gulp: { T: 0.6 }, yawn: { T: 1.2 }, prot: { T: 0.25 }, cough: { T: 0.27 } };
 function mouthApply(v) {
-  const M = AN.mouth; if (!M) return;
+  const M = F.AN.mouth; if (!M) return;
   rotAx(M.jaw, 0, v.jaw * D2R);
   M.premax.position.copy(M.premax.userData.p0).addScaledVector(M.dloc, v.premax);
   const m = Math.min(20, 0.5 * v.jaw + 400 * v.premax) * D2R; for (const b of M.mx) rotAx(b, 0, m);
   for (const b of M.op) rotAx(b, 1, v.op * D2R);
   for (const b of M.br) rotAx(b, 2, v.br * D2R);
-  M.cur = { jaw: v.jaw, premax: v.premax, op: v.op, br: v.br };
+  const c = M.cur; c.jaw = v.jaw; c.premax = v.premax; c.op = v.op; c.br = v.br;
 }
-function mouthPose() { const M = AN.mouth; mouthApply(M.force || { jaw: 0, premax: 0, op: 0, br: 0 }); }
+function mouthPose() { const M = F.AN.mouth; mouthApply(M.force || { jaw: 0, premax: 0, op: 0, br: 0 }); }
+const rnd = (a, b) => a + (b - a) * Math.random();
 function mouthStep(S, dt, t) {
-  const M = AN.mouth; let v, name = "";
+  const M = F.AN.mouth; let v, name = "";
   const th = ((S.bph / (2 * Math.PI)) % 1 + 1) % 1, wrapped = th < M.prevTh; M.prevTh = th;
-  const rnd = (a, b) => a + (b - a) * Math.random();
   if (M.due === null) M.due = { gulp: t + rnd(8, 25), prot: t + rnd(4, 12), yawn: t + rnd(60, 180), cough: t + rnd(40, 80) };
   if (M.force) { v = M.force; name = "force"; }
   else {
@@ -792,7 +1062,7 @@ function mouthStep(S, dt, t) {
     if (!v) {   // breathing (suppressed for one cycle after a gulp/yawn)
       const k = t < M.supp ? 0 : 1;
       const jamp = 5 + 1.0 * S.eff, oamp = Math.min(8, 6 * (1 + 0.35 * S.eff));
-      v = { jaw: k * mpulse(th) * jamp, premax: 0, op: k * mpulse(th - 0.40) * oamp, br: k * mpulse(th - 0.35) * 3 };
+      v = M.vb || (M.vb = { jaw: 0, premax: 0, op: 0, br: 0 }); v.jaw = k * mpulse(th) * jamp; v.op = k * mpulse(th - 0.40) * oamp; v.br = k * mpulse(th - 0.35) * 3;
     }
   }
   M.evn = name; S.jawAng = v.jaw * D2R; S.opAng = v.op * D2R; mouthApply(v);
@@ -807,29 +1077,29 @@ function anatGoldfish(root, sm, bs) {
   for (const sg of [1, -1]) {
     const c = at(GFA.eye).multiply(new V3(sg, 1, 1)), eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true, rigTw: 0.02 }); nb.push(eb);
     ops.push({ bone: eb, fn: (i, p) => { const d = p.distanceTo(c), g = ss01(GFA.eyeX * 0.6, GFA.eyeX * 1.3, sg * p.x); return ss01(GFA.eyeR[1], GFA.eyeR[0], d) * g; } });
-    if (PT) { AN.eyes.push({ bone: eb, side: sg }); continue; }
+    if (PT) { F.AN.eyes.push({ bone: eb, side: sg }); continue; }
     const oc = at(GFA.op).multiply(new V3(sg, 1, 1)), hp = at(GFA.opHinge).multiply(new V3(sg, 1, 1)), ob = mkBone("op" + (sg > 0 ? "R" : "L"), head, hp, "op", { side: sg, skipWall: true, rigTw: 0.05 }); nb.push(ob);
     ops.push({ bone: ob, fn: (i, p) => { const r = Math.hypot((p.z - oc.z) / GFA.opR[0], (p.y - oc.y) / GFA.opR[1]); return ss01(1.0, 0.5, r) * ss01(0.06, 0.14, sg * p.x); } });
-    AN.eyes.push({ bone: eb, side: sg }); AN.ops.push({ bone: ob, side: sg });
+    F.AN.eyes.push({ bone: eb, side: sg }); F.AN.ops.push({ bone: ob, side: sg });
   }
-  if (PT) { mouthBones(sm, head, nb, ops, MR); const M_ = AN.mouth, kb = [M_.jaw, M_.premax, ...M_.mx, ...M_.op, ...M_.br]; for (const o of ops) if (o.bone && o.bone.userData.role === "eye") o.keepBones = kb; }
+  if (PT) { mouthBones(sm, head, nb, ops, MR); const M_ = F.AN.mouth, kb = [M_.jaw, M_.premax, ...M_.mx, ...M_.op, ...M_.br]; for (const o of ops) if (o.bone && o.bone.userData.role === "eye") o.keepBones = kb; }
   else {
   const jb = mkBone("jaw", head, at(GFA.jawPivot), "jaw", { skipWall: true, rigTw: 0.03 }); nb.push(jb);
   ops.push({ bone: jb, fn: (i, p) => ss01(GFA.jawY, GFA.jawY - 0.03, p.y) * ss01(GFA.jawZ - 0.04, GFA.jawZ + 0.06, p.z) * ss01(0.12, 0.05, Math.abs(p.x)) });
-  AN.jaw = { bone: jb }; }
+  F.AN.jaw = { bone: jb }; }
   const OFFG = (Q.get("anoff") || "").split(","); const opsF = ops.filter(o => o.set ? !OFFG.includes("mouth") : !OFFG.includes(o.bone.userData.role));
   reskin([sm], nb, () => opsF); if (Q.get("anatvis") === "1") anatVis([sm]); finishAnat(nb); finishAnat(bs.filter(b => b.userData.anat));
   // rays + pectoral fans from the rig chains
   const byGroup = {};
-  for (const ch of RIG.chains) if (ch.kind === "ray" || ch.kind === "pec") (byGroup[ch.group] || (byGroup[ch.group] = [])).push(ch);
+  for (const ch of F.RIG.chains) if (ch.kind === "ray" || ch.kind === "pec") (byGroup[ch.group] || (byGroup[ch.group] = [])).push(ch);
   const NX = new V3(1, 0, 0), NY = new V3(0, 1, 0);
   for (const g in byGroup) {
     const list = byGroup[g].sort((a, b) => a.k - b.k);
-    if (list[0].kind === "ray") { list.forEach((ch, i) => AN.rays.push(mkRay(g, i, ch.ids.map(id => bs[id]), ch.root, ch.root.clone().addScaledVector(ch.dir, ch.len), NX))); }
+    if (list[0].kind === "ray") { list.forEach((ch, i) => F.AN.rays.push(mkRay(g, i, ch.ids.map(id => bs[id]), ch.root, ch.root.clone().addScaledVector(ch.dir, ch.len), NX))); }
     else { const mean = new V3(); list.forEach(ch => mean.add(ch.dir)); mean.normalize();
-      AN.pecs.push({ side: list[0].side, hinge: bs[RIG.defs.findIndex(d => d.name === list[0].hinge)], subs: list.map(ch => ({ bones: ch.ids.map(id => bs[id]), fan: Math.atan2(new V3().crossVectors(mean, ch.dir).dot(NY), mean.dot(ch.dir)) })), simple: false }); }
+      F.AN.pecs.push({ side: list[0].side, hinge: bs[F.RIG.defs.findIndex(d => d.name === list[0].hinge)], subs: list.map(ch => ({ bones: ch.ids.map(id => bs[id]), fan: Math.atan2(new V3().crossVectors(mean, ch.dir).dot(NY), mean.dot(ch.dir)) })), simple: false }); }
   }
-  AN.dorsalIdx = AN.rays.filter(r => r.group === "dorsal");
+  F.AN.dorsalIdx = F.AN.rays.filter(r => r.group === "dorsal");
   setupAnat();
 }
 // ---- betta: eyes (separate mesh, split per eye), operculum + jaw + dorsal/anal rays (new bones, weights taken from the nearby verts) ----
@@ -856,7 +1126,7 @@ function rigBetta(root) {
     for (let i = 0; i < ep.count; i++) { pt.fromBufferAttribute(ep, i).applyMatrix4(Mr); bb.expandByPoint(pt); }
     const xe = (bb.min.x + bb.max.x) / 2;
     for (let i = 0; i < ep.count; i++) { pt.fromBufferAttribute(ep, i).applyMatrix4(Mr); half[pt.x > xe ? 0 : 1].expandByPoint(pt); }
-    [1, -1].forEach((sg, h) => { const c = half[h].getCenter(new V3()); (AN.eyeInfo = AN.eyeInfo || {})[sg] = { c: c.toArray().map(v => +v.toFixed(3)), size: half[h].getSize(new V3()).toArray().map(v => +v.toFixed(3)) }; const eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true }); nb.push(eb); AN.eyes.push({ bone: eb, side: sg });
+    [1, -1].forEach((sg, h) => { const c = half[h].getCenter(new V3()); (F.AN.eyeInfo = F.AN.eyeInfo || {})[sg] = { c: c.toArray().map(v => +v.toFixed(3)), size: half[h].getSize(new V3()).toArray().map(v => +v.toFixed(3)) }; const eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true }); nb.push(eb); F.AN.eyes.push({ bone: eb, side: sg });
       opsEye.push({ bone: eb, fn: (i, p) => (p.x > xe) === (sg > 0) ? 1 : 0 }); });
   }
   // --- operculum: the plate the old gill bones cover; hinge = its front-upper edge ---
@@ -866,22 +1136,22 @@ function rigBetta(root) {
     for (let i = 0; i < nV; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (sg * (pt.x - xm) > 0 && oldW(i, set) > 0.35) { mn.min(pt); mx.max(pt); n++; xh = Math.max(xh, sg * (pt.x - xm)); } }
     if (n < 10) continue;
     const rz = (mx.z - mn.z) / 2 * 0.85, zc = (mn.z + mx.z) / 2 + 0.1 * rz, yc = (mn.y + mx.y) / 2, ry = (mx.y - mn.y) / 2 * 0.95, hp = new V3(xm + sg * xh * 0.8, yc + ry * 0.35, mx.z);
-    const ob = mkBone("op" + (sg > 0 ? "R" : "L"), head, hp, "op", { side: sg, skipWall: true }); nb.push(ob); AN.ops.push({ bone: ob, side: sg });
+    const ob = mkBone("op" + (sg > 0 ? "R" : "L"), head, hp, "op", { side: sg, skipWall: true }); nb.push(ob); F.AN.ops.push({ bone: ob, side: sg });
     opsBody.push({ bone: ob, fn: (i, p) => { const r = Math.hypot((p.z - zc) / rz, (p.y - yc) / ry); return ss01(1.0, 0.5, r) * ss01(0.2, 0.6, sg * (p.x - xm) / xh); } });
-    AN.opInfo = AN.opInfo || {}; AN.opInfo[sg] = { zc, yc, rz, ry, hp: hp.toArray().map(v => +v.toFixed(3)), n };
+    F.AN.opInfo = F.AN.opInfo || {}; F.AN.opInfo[sg] = { zc, yc, rz, ry, hp: hp.toArray().map(v => +v.toFixed(3)), n };
   }
   // --- jaw: lower jaw = the snout below the mouth line (tip → back-down slope), hinge behind and below the mouth; sizes are in eye diameters ---
   if (!OFF.includes("jaw")) {
     let tipY = 0, tipZ = -1e9; for (let i = 0; i < nV; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (pt.z > tipZ) { tipZ = pt.z; tipY = pt.y; } }
-    const ed = AN.eyeInfo ? AN.eyeInfo[1].size[1] : 0.24, hp = new V3(xm, tipY - 1.3 * ed, tipZ - 1.7 * ed), slope = AT("jslope", 0.55);
-    const jb = mkBone("jaw", head, hp, "jaw", { skipWall: true }); nb.push(jb); AN.jaw = { bone: jb }; AN.noseTip = [+tipZ.toFixed(3), +tipY.toFixed(3)];
+    const ed = F.AN.eyeInfo ? F.AN.eyeInfo[1].size[1] : 0.24, hp = new V3(xm, tipY - 1.3 * ed, tipZ - 1.7 * ed), slope = AT("jslope", 0.55);
+    const jb = mkBone("jaw", head, hp, "jaw", { skipWall: true }); nb.push(jb); F.AN.jaw = { bone: jb }; F.AN.noseTip = [+tipZ.toFixed(3), +tipY.toFixed(3)];
     opsBody.push({ bone: jb, fn: (i, p) => ss01(0, -0.45 * ed, p.y - (tipY - (tipZ - p.z) * slope)) * ss01(tipZ - 2.7 * ed, tipZ - 1.3 * ed, p.z) * ss01(1.2 * ed, 0.5 * ed, Math.abs(p.x - xm)) * ss01(-4.0 * ed, -3.4 * ed, p.y - tipY) });
-    AN.jawInfo = { hp: hp.toArray().map(v => +v.toFixed(3)), ed }; }
+    F.AN.jawInfo = { hp: hp.toArray().map(v => +v.toFixed(3)), ed }; }
   // --- dorsal + anal rays: replace the old coarse fin chains by a fan of new ray chains ---
   const spineB = ["Bone001", "Bone002", "Bone003", "Bone004", "Bone005"].map(B).filter(Boolean);
   const FINSETS = [{ g: "dorsal", up: 1, names: ["Bone018", "Bone021", "Bone022", "Bone019", "Bone023", "Bone024", "Bone020", "Bone025", "Bone026"], N: Math.round(AT("nd", 8)), nj: 3 },
                    { g: "analB", up: -1, names: ["Bone033", "Bone035", "Bone037", "Bone034", "Bone036", "Bone038"], N: Math.round(AT("na", 6)), nj: 3 }];
-  const dead = []; AN.finInfo = {};
+  const dead = []; F.AN.finInfo = {};
   for (const FS of OFF.includes("rays") ? [] : FINSETS) {
     const set = idxOf(FS.names), R = [];
     for (let i = 0; i < nV; i++) { if (oldW(i, set) > 0.5) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); R.push(pt.clone()); } }
@@ -889,12 +1159,12 @@ function rigBetta(root) {
     const zs = R.map(q => q.z).sort((a, b) => a - b), zlo = zs[Math.floor(zs.length * 0.02)], zhi = zs[Math.floor(zs.length * 0.98)], dz = (zhi - zlo) / FS.N;
     const sigma = 0.85 * dz, rays = [];
     for (let k = 0; k < FS.N; k++) {
-      const zk = zhi - dz * (k + 0.5), V = R.filter(q => Math.abs(q.z - zk) < dz * 0.9); if (V.length < 4) continue;
-      const ys = V.map(q => q.y).sort((a, b) => a - b), yb = FS.up > 0 ? ys[Math.floor(ys.length * 0.03)] : ys[Math.floor(ys.length * 0.97)], yt = FS.up > 0 ? ys[ys.length - 1] : ys[0];
-      const top = V.filter(q => FS.up * (q.y - yb) > FS.up * (yt - yb) * 0.85), tz = top.reduce((s, q) => s + q.z, 0) / Math.max(1, top.length);
+      const zk = zhi - dz * (k + 0.5), Vr = R.filter(q => Math.abs(q.z - zk) < dz * 0.9); if (Vr.length < 4) continue;
+      const ys = Vr.map(q => q.y).sort((a, b) => a - b), yb = FS.up > 0 ? ys[Math.floor(ys.length * 0.03)] : ys[Math.floor(ys.length * 0.97)], yt = FS.up > 0 ? ys[ys.length - 1] : ys[0];
+      const top = Vr.filter(q => FS.up * (q.y - yb) > FS.up * (yt - yb) * 0.85), tz = top.reduce((s, q) => s + q.z, 0) / Math.max(1, top.length);
       rays.push({ k, base: new V3(xm, yb, zk), tip: new V3(xm, yt, tz) });
     }
-    AN.finInfo[FS.g] = { zlo, zhi, n: rays.length, nVerts: R.length };
+    F.AN.finInfo[FS.g] = { zlo, zhi, n: rays.length, nVerts: R.length };
     const toOps = [], rayRecs = [];
     rays.forEach((r, ri) => {
       let par = spineB[0], bd = 1e9; for (const sb of spineB) { const dd = Math.abs(wp(sb).z - r.base.z); if (dd < bd) { bd = dd; par = sb; } }
@@ -904,82 +1174,82 @@ function rigBetta(root) {
       bs.forEach((b, j) => toOps.push({ bone: b, fn: (i, p) => { const [g, t] = gaussRay(p, r.base, d, len, sigma), u = t * FS.nj, i0 = Math.min(Math.floor(u), FS.nj - 1), f = u - i0; const wj = j === i0 ? (i0 >= FS.nj - 1 ? 1 : 1 - f) : (j === i0 + 1 ? f : 0); return g * wj; } }));
     });
     opsBody.push({ from: set, to: toOps }); for (const n of FS.names) if (B(n)) { B(n).userData.dead = true; dead.push(B(n)); }
-    AN.rays.push(...rayRecs);
+    F.AN.rays.push(...rayRecs);
   }
   reskin(eyeM ? [body, eyeM] : [body], nb, m => m === body ? opsBody : opsEye); if (Q.get("anatvis") === "1") anatVis(eyeM ? [body, eyeM] : [body]); finishAnat(nb);
   // --- pectoral fins: reuse the existing bones (root → mid → 2 tips), driven by the stroke instead of the clip/drag springs ---
   for (const [sg, nm] of [[1, ["Bone010", "Bone012", "Bone014", "Bone016"]], [-1, ["Bone011", "Bone013", "Bone015", "Bone017"]]]) {
-    const bb = nm.map(B); if (bb.some(v => !v)) continue; bb.forEach(b => { b.userData.own = true; AN.own.push(b); });
+    const bb = nm.map(B); if (bb.some(v => !v)) continue; bb.forEach(b => { b.userData.own = true; F.AN.own.push(b); });
     bb.forEach(b => { const q = new THREE.Quaternion(), pq = new THREE.Quaternion(); b.getWorldQuaternion(q); b.userData.ax = AXV.map(v => v.clone().applyQuaternion(q.clone().invert())); });
-    AN.pecs.push({ side: sg, hinge: bb[0], subs: [{ bones: [bb[1], bb[2]], fan: 0.35 }, { bones: [bb[3]], fan: -0.35, from: bb[1] }], simple: true, parentOf: [[bb[1], bb[0]], [bb[2], bb[1]], [bb[3], bb[1]]] });
+    F.AN.pecs.push({ side: sg, hinge: bb[0], subs: [{ bones: [bb[1], bb[2]], fan: 0.35 }, { bones: [bb[3]], fan: -0.35, from: bb[1] }], simple: true, parentOf: [[bb[1], bb[0]], [bb[2], bb[1]], [bb[3], bb[1]]] });
   }
-  AN.dead = dead; setupAnat();
+  F.AN.dead = dead; setupAnat();
 }
 function setupAnat() {
-  AN.ready = true;
-  AN.S = { eff: 0.2, bph: Math.random() * 6, pph: 0, brake: 0, dec: 0, spd: 0.9, vp: new THREE.Vector3(0, 0, 1), anti: 0,
+  F.AN.ready = true;
+  F.AN.S = { eff: 0.2, bph: Math.random() * 6, pph: 0, brake: 0, dec: 0, spd: 0.9, vp: new THREE.Vector3(0, 0, 1), anti: 0,
     eye: { S: 0, from: 0, to: 0, t0: -1, dur: 0.05, next: 1.0, vor: 0, cool: 0, st: [{ x: 0, v: 0, pend: 0 }, { x: 0, v: 0, pend: 0 }], n: 0, log: [] }, rec: [] };
-  for (const pc of AN.pecs) { pc.ph = 0; pc.a = new Map(); pc.cmd = { sweep: 0, sig: 1 }; }
+  for (const pc of F.AN.pecs) { pc.ph = 0; pc.a = new Map(); pc.cmd = { sweep: 0, sig: 1 }; }
 }
 const relAngAxis = (b, a) => { const r = b.userData.q0.clone().invert().multiply(b.quaternion); return 2 * Math.atan2(r.x * a.x + r.y * a.y + r.z * a.z, r.w); };
 const relAng = (b, axI) => { const q0 = b.userData.q0, q = b.quaternion, r = q0.clone().invert().multiply(q), a = b.userData.ax[axI]; return 2 * Math.atan2(r.x * a.x + r.y * a.y + r.z * a.z, r.w); };   // actual rotation about root axis axI (probe)
 const rotAx = (b, i, a) => { if (a !== 0) b.quaternion.multiply(_qa.setFromAxisAngle(b.userData.ax[i], a)); };
 const wrnd = (t, i) => Math.sin(t * 13.1 + 2.3 * i) * 0.5 + Math.sin(t * 7.7 + 4.1 * i) * 0.3 + Math.sin(t * 23.3 + 1.1 * i) * 0.2;
-let INTENT = 0;
+function sacc(E, t, EM, to, kind) { E.from = E.S; E.to = clamp(to, -EM, EM); E.t0 = t; E.dur = 0.03 + 0.05 * Math.min(1, Math.abs(E.to - E.from) / (25 * D2R)) * (0.7 + 0.6 * Math.random()); E.n++; E.cur = { t, kind, amp: (E.to - E.from) / D2R, dur: E.dur }; E.log.push(E.cur); if (E.log.length > 400) E.log.shift(); }
 function anatStep(dt, t) {
-  if (!AN.ready || !(dt > 0)) return;
-  if (POSE) { for (const b of AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } for (const b of AN.own) b.quaternion.copy(b.userData.q0); if (AN.mouth) mouthPose(); return; }
-  const S = AN.S, E = S.eye; t = S.ts = (S.ts || 0) + dt;   // own sim clock (frame-rate independent: dt is capped, so slow machines slow the fish, not the clock)
-  for (const b of AN.bones) b.quaternion.copy(b.userData.q0);
-  for (const b of AN.own) b.quaternion.copy(b.userData.q0);
-  const eff0 = DISPLAY ? clamp(0.85 * beat + 0.3 * Math.max(0, speed - 0.7), 0, 1) : 0.15; S.eff += (eff0 - S.eff) * (1 - Math.exp(-dt * 0.9));
-  const hr = DISPLAY ? Math.atan2(_va.crossVectors(S.vp, V).dot(UPV), S.vp.dot(V)) / dt : 0; S.vp.copy(V); S.hr = hr;
-  const dv = DISPLAY ? (speed - S.spd) / dt : 0; S.spd = speed; S.dec += (-dv - S.dec) * (1 - Math.exp(-dt * 6));
+  if (!F.AN.ready || !(dt > 0)) return;
+  if (POSE) { for (const b of F.AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } for (const b of F.AN.own) b.quaternion.copy(b.userData.q0); if (F.AN.mouth) mouthPose(); return; }
+  const S = F.AN.S, E = S.eye; t = S.ts = (S.ts || 0) + dt;   // own sim clock (frame-rate independent: dt is capped, so slow machines slow the fish, not the clock)
+  for (const b of F.AN.bones) b.quaternion.copy(b.userData.q0);
+  for (const b of F.AN.own) b.quaternion.copy(b.userData.q0);
+  const eff0 = DISPLAY ? clamp(0.85 * F.beat + 0.3 * Math.max(0, F.speed - 0.7), 0, 1) : 0.15; S.eff += (eff0 - S.eff) * (1 - Math.exp(-dt * 0.9));
+  const hr = DISPLAY ? Math.atan2(_va.crossVectors(S.vp, F.V).dot(UPV), S.vp.dot(F.V)) / dt : 0; S.vp.copy(F.V); S.hr = hr;
+  const dv = DISPLAY ? (F.speed - S.spd) / dt : 0; S.spd = F.speed; S.dec += (-dv - S.dec) * (1 - Math.exp(-dt * 6));
   // ---------------- eyes ----------------
   const EM = AT("eyemax", 15) * D2R, EK = AT("eyek", 1);
-  const sacc = (to, kind) => { E.from = E.S; E.to = clamp(to, -EM, EM); E.t0 = t; E.dur = 0.03 + 0.05 * Math.min(1, Math.abs(E.to - E.from) / (25 * D2R)) * (0.7 + 0.6 * Math.random()); E.n++; E.cur = { t, kind, amp: (E.to - E.from) / D2R, dur: E.dur }; E.log.push(E.cur); if (E.log.length > 400) E.log.shift(); };
   if (t >= E.next) {
     const roomP = EM - E.S, roomN = EM + E.S, sgn = Math.random() < roomP / (roomP + roomN) ? 1 : -1, room = sgn > 0 ? roomP : roomN, amp = Math.min(room, (2 + 23 * Math.pow(Math.random(), 2)) * D2R);
-    sacc(E.S + (amp < 2 * D2R ? -sgn * 2 * D2R * (1 + Math.random()) : sgn * amp), "rand"); E.next = t + (1 + 2 * Math.random()) * EK;
+    sacc(E, t, EM, E.S + (amp < 2 * D2R ? -sgn * 2 * D2R * (1 + Math.random()) : sgn * amp), "rand"); E.next = t + (1 + 2 * Math.random()) * EK;
   }
-  if (DISPLAY && Math.abs(INTENT) > 0.4 && t > E.cool && E.S * Math.sign(INTENT) < 0.5 * EM) { sacc(Math.sign(INTENT) * (7 + 7 * Math.random()) * D2R, "turn"); E.cool = t + 2.2; E.next = Math.max(E.next, t + 0.9); E.cur.intent = INTENT; }
+  if (DISPLAY && Math.abs(F.INTENT) > 0.4 && t > E.cool && E.S * Math.sign(F.INTENT) < 0.5 * EM) { sacc(E, t, EM, Math.sign(F.INTENT) * (7 + 7 * Math.random()) * D2R, "turn"); E.cool = t + 2.2; E.next = Math.max(E.next, t + 0.9); E.cur.intent = F.INTENT; }
   if (E.t0 >= 0) { const u = (t - E.t0) / E.dur; if (u < 1) E.S = E.from + (E.to - E.from) * (1 - Math.pow(1 - u, 3)); else { if (E.S !== E.to) { E.S = E.to; for (const s of E.st) s.x += (E.to - E.from) * (Math.random() * 0.22 - 0.06); } } }
   E.vor += -AT("vor", 0.3) * hr * dt; E.vor *= Math.exp(-dt / 0.7); E.vor = clamp(E.vor, -0.5 * EM, 0.5 * EM);
   for (const s of E.st) { for (let n = Math.ceil(dt / 0.004), h = dt / n; n > 0; n--) { s.v += (-1500 * s.x - 2 * 0.45 * 38.7 * s.v) * h; s.x += s.v * h; } }
-  S.eyeAng = [];
-  AN.eyes.forEach((e, k) => { const a = clamp(E.S + E.vor, -EM, EM) + E.st[k].x; S.eyeAng.push(a); rotAx(e.bone, 1, a); });
+  (S.eyeAng || (S.eyeAng = [])).length = 0;
+  const ETRK = AT("eyetrk", 0); if (ETRK) E.trk = (E.trk || 0) + ((DISPLAY ? clamp(F.INTENT, -1, 1) * 0.8 + clamp(F.steer, -1, 1) * 0.3 : 0) * ETRK * EM - (E.trk || 0)) * (1 - Math.exp(-dt / 0.22));   // betta flow: gaze leads/tracks the turn (smooth, on top of saccades)
+  for (let k = 0; k < F.AN.eyes.length; k++) { const a = clamp(E.S + E.vor + (E.trk || 0), -EM, EM) + E.st[k].x; S.eyeAng.push(a); rotAx(F.AN.eyes[k].bone, 1, a); }
   // ---------------- gills + jaw ----------------
   const calm = AT("gillrate", 70), hi = AT("gillmax", 120), rate = (calm + (hi - calm) * S.eff) / 60; S.bph += dt * rate * 2 * Math.PI; S.rate = rate * 60;
   const mouth = 0.5 - 0.5 * Math.cos(S.bph), opn = 0.5 - 0.5 * Math.cos(S.bph - AT("gilllag", 0.4) * 2 * Math.PI);
-  const flare = AT("gill", GOLD ? 6 : 7) * D2R * (1 + 0.35 * S.eff);
-  S.opAng = opn * flare; S.jawAng = mouth * AT("jaw", GOLD ? 8 : 7) * D2R;
-  if (AN.mouth) mouthStep(S, dt, t);
-  else { for (const o of AN.ops) rotAx(o.bone, 1, -o.side * S.opAng);
-  if (AN.jaw) rotAx(AN.jaw.bone, 0, S.jawAng); }
+  const flare = AT("gill", F.GOLD ? 6 : 7) * D2R * (1 + 0.35 * S.eff);
+  S.opAng = opn * flare; S.jawAng = mouth * AT("jaw", F.GOLD ? 8 : 7) * D2R;
+  if (F.AN.mouth) mouthStep(S, dt, t);
+  else { for (const o of F.AN.ops) rotAx(o.bone, 1, -o.side * S.opAng);
+  if (F.AN.jaw) rotAx(F.AN.jaw.bone, 0, S.jawAng); }
   // ---------------- pectoral fins ----------------
   const f0 = AT("pecf", 1.2), f1 = AT("pecfmax", 2.6), fHz = f0 + (f1 - f0) * clamp(S.eff * 1.1, 0, 1); S.pph += dt * 2 * Math.PI * fHz; S.pecHz = fHz;
   const bri = ss01(0.35, 1.0, S.dec); S.brake = Math.max(bri, S.brake * Math.exp(-dt / 0.8));
-  const A_S = AT("pec", GOLD ? 16 : 20) * D2R, FOLD = AT("pecfold", 0.5);
-  for (const pc of AN.pecs) {
+  const A_S = AT("pec", F.GOLD ? 16 : 20) * D2R, FOLD = AT("pecfold", 0.5);
+  for (const pc of F.AN.pecs) {
     const sg = pc.side, ph = S.pph + (sg > 0 ? Math.PI * (1 - S.brake) : 0), u = ((ph / (2 * Math.PI)) % 1 + 1) % 1;
     let x, sig; if (u < 0.45) { x = -Math.cos(Math.PI * u / 0.45); sig = 1; } else { const q = (u - 0.45) / 0.55; x = Math.cos(Math.PI * q); sig = 1 - FOLD * Math.pow(Math.sin(Math.PI * q), 0.7); }
-    const inner = DISPLAY ? ss01(0.25, 0.8, sg * steer) : 0, outerK = DISPLAY ? ss01(0.25, 0.8, -sg * steer) : 0;   // turning toward +x: the +x side fin is the inner one
+    const inner = DISPLAY ? ss01(0.25, 0.8, sg * F.steer) : 0, outerK = DISPLAY ? ss01(0.25, 0.8, -sg * F.steer) : 0;   // turning toward +x: the +x side fin is the inner one
     const amp = (1 - 0.88 * inner) * (1 + 0.25 * outerK);
     x = x * amp; x += (-0.45 - x) * inner; x += (-1.15 - x) * S.brake; sig += (1 - sig) * Math.max(inner, S.brake);
     const sweep = sg * A_S * x; pc.cmd.sweep = sweep; pc.cmd.sig = sig; pc.cmd.x = x;
     rotAx(pc.hinge, 1, sweep);
     // outer rays trail: each bone follows its parent's absolute sweep angle through a first-order lag (tau grows toward the edge)
-    const absA = new Map(); absA.set(pc.hinge, sweep);
-    pc.subs.forEach(sub => { let parA = sub.from ? (pc.a.get(sub.from) != null ? pc.a.get(sub.from) : sweep) : sweep; sub.bones.forEach((b, j) => {
-      let a = pc.a.get(b); if (a == null) a = parA; const tau = 0.035 + 0.03 * j; a += (parA - a) * (1 - Math.exp(-dt / tau)); pc.a.set(b, a);
-      let rel = a - parA; if (j === 0) rel += (sig - 1) * sub.fan * (pc.simple ? 0.5 : 1);
-      rotAx(b, pc.simple ? 1 : 1, rel); parA = a; }); });
+    for (let si = 0; si < pc.subs.length; si++) { const sub = pc.subs[si]; let parA = sub.from ? (pc.a.get(sub.from) != null ? pc.a.get(sub.from) : sweep) : sweep;
+      for (let j = 0; j < sub.bones.length; j++) { const b = sub.bones[j];
+        let a = pc.a.get(b); if (a == null) a = parA; const tau = 0.035 + 0.03 * j; a += (parA - a) * (1 - Math.exp(-dt / tau)); pc.a.set(b, a);
+        let rel = a - parA; if (j === 0) rel += (sig - 1) * sub.fan * (pc.simple ? 0.5 : 1);
+        rotAx(b, pc.simple ? 1 : 1, rel); parA = a; } }
     pc.measSig = sig;
   }
   // ---------------- dorsal / anal ray waves ----------------
   const DPH = AT("dph", 30) * D2R, DWA = AT("dwa", 0.16), DG = AT("dg", 0.18), DK = AT("dkw", 22), DZ = AT("dz", 0.4), DFL = AT("dfl", 0.05), CAP = AT("dcap", 0.6), CPL = AT("dcouple", 8);
-  const wph = DISPLAY ? phase : t * 4.5, drive = DISPLAY ? 0.3 + 0.7 * beat : 0.6, Lw = BODY_L * ZOOM, spd1 = DISPLAY ? clamp(speed, 0, 2) : 0.5;
-  const groups = {}; for (const r of AN.rays) (groups[r.group] || (groups[r.group] = [])).push(r);
+  const wph = DISPLAY ? F.phase : t * 4.5, drive = DISPLAY ? 0.3 + 0.7 * F.beat : 0.6, Lw = F.BODY_L * ZOOM, spd1 = DISPLAY ? clamp(F.speed, 0, 2) : 0.5;
+  const groups = F.AN.groups || (F.AN.groups = (() => { const o = {}; for (const r of F.AN.rays) (o[r.group] || (o[r.group] = [])).push(r); return o; })());   // (rays are fixed after the rig: grouped once)
   for (const g in groups) {
     const list = groups[g], nj = list[0].bones.length;
     for (let ri = 0; ri < list.length; ri++) {
@@ -993,13 +1263,13 @@ function anatStep(dt, t) {
         const parTh = j ? r.th[j - 1] : 0;
         const AJ = j === 0 ? 0.35 : (j === 1 ? 0.85 : 1), wave = DWA * AJ * drive * Math.sin(wph - ri * DPH - j * 0.45 + (g.startsWith("anal") ? 0.6 : 0)) + parTh * 0.4;   // root joint barely moves (it sits on the skin seam); the wave grows toward the free edge, each joint lagging its parent
         const flut = j ? DFL * (0.25 + spd1) * (j / (nj - 1)) * wrnd(t + 0.37 * ri, ri * 3 + j) : 0;
-        r.tgt = (r.tgt || []); r.tgt[j] = wave - DG * clamp(un, -1.5, 1.5) * (j ? 1 + 0.3 * j : 0.4) + flut - (j === 0 ? 0.04 * (DISPLAY ? steer : 0) : 0);
+        r.tgt = (r.tgt || []); r.tgt[j] = wave - DG * clamp(un, -1.5, 1.5) * (j ? 1 + 0.3 * j : 0.4) + flut - (j === 0 ? 0.04 * (DISPLAY ? F.steer : 0) : 0);
         sumTh += Math.abs(r.th[j]);
       }
     }
     // neighbour coupling per joint level (ray i pulled toward the mean of its two neighbours) so the sheet cannot fold across itself
     const kc = 1 - Math.exp(-dt * CPL);
-    for (let j = 0; j < nj; j++) { for (let ri = 0; ri < list.length; ri++) { const nbm = [list[ri - 1], list[ri + 1]].filter(Boolean); if (!nbm.length) continue; const m = nbm.reduce((s, q) => s + q.tgt[j], 0) / nbm.length; list[ri].tgt[j] += (m - list[ri].tgt[j]) * 0.35; } }
+    for (let j = 0; j < nj; j++) { for (let ri = 0; ri < list.length; ri++) { const na = list[ri - 1], nb2 = list[ri + 1]; if (!na && !nb2) continue; const m = (na && nb2 ? na.tgt[j] + nb2.tgt[j] : (na || nb2).tgt[j]) / (na && nb2 ? 2 : 1); list[ri].tgt[j] += (m - list[ri].tgt[j]) * 0.35; } }
     for (const r of list) {
       for (let j = 0; j < nj; j++) {
         const w0 = DK * Math.pow(0.71, j), z = Math.max(0.18, 0.45 - 0.08 * j);   // ω falls ×0.71 per joint (stiffness ×0.5), damping ratio too
@@ -1010,30 +1280,29 @@ function anatStep(dt, t) {
     }
   }
   if (window.__anatRec) {   // veil probes: lateral offset of the tail base vs the free tips (body frame), tip span, along-track acceleration
-    if (!AN.veilSet) { AN.veilSet = { base: RIG ? RIG.bs[6] : (bones.find(b => /^Bone005_/.test(b.name)) || null), tips: bones.filter(b => !b.children.some(c => c.isBone) && (b.userData.tw || 0) > 0.72 && !b.userData.own) }; }
-    const V0 = AN.veilSet; if (V0.base) { outer.updateMatrixWorld(true); const lat = b => outer.worldToLocal(tipOf(b, new THREE.Vector3())), tp = V0.tips.map(lat), bp = outer.worldToLocal(V0.base.getWorldPosition(new THREE.Vector3()));
+    if (!F.AN.veilSet) { F.AN.veilSet = { base: F.RIG ? F.RIG.bs[6] : (F.bones.find(b => /^Bone005_/.test(b.name)) || null), tips: F.bones.filter(b => !b.children.some(c => c.isBone) && (b.userData.tw || 0) > 0.72 && !b.userData.own) }; }
+    const V0 = F.AN.veilSet; if (V0.base) { F.outer.updateMatrixWorld(true); const lat = b => F.outer.worldToLocal(tipOf(b, new THREE.Vector3())), tp = V0.tips.map(lat), bp = F.outer.worldToLocal(V0.base.getWorldPosition(new THREE.Vector3()));
       let span = 0, n = 0; for (let i = 0; i < tp.length; i++) for (let j = i + 1; j < tp.length; j++) { span += tp[i].distanceTo(tp[j]); n++; }
-      S.veil = { vb: bp.x, vt: tp.reduce((q, v) => q + v.x, 0) / Math.max(1, tp.length), vs: span / Math.max(1, n) / (BODY_L * ZOOM), acc: VEIL.acc }; } }
-  S.nanCheck = AN.bones.every(b => Number.isFinite(b.quaternion.x + b.quaternion.w));
-  if (window.__anatRec) { S.rec.push({ t, eye: S.eyeAng ? S.eyeAng.map(a => a / D2R) : [], eS: E.S / D2R, op: S.opAng / D2R, jaw: S.jawAng / D2R, mth: AN.mouth ? [AN.mouth.cur.jaw, AN.mouth.cur.premax, AN.mouth.cur.op, AN.mouth.cur.br, AN.mouth.evn] : null, rate: S.rate, hr, brake: S.brake, steer, intent: INTENT,
-    pec: AN.pecs.map(pc => [pc.side, pc.cmd.sweep / D2R, pc.cmd.sig]), ray: AN.rays.map(r => r.th.slice()), veil: S.veil || null }); if (S.rec.length > 3000) S.rec.shift(); }
+      S.veil = { vb: bp.x, vt: tp.reduce((q, v) => q + v.x, 0) / Math.max(1, tp.length), vs: span / Math.max(1, n) / (F.BODY_L * ZOOM), acc: F.VEIL.acc }; } }
+  S.nanCheck = F.AN.bones.every(b => Number.isFinite(b.quaternion.x + b.quaternion.w));
+  if (window.__anatRec) { S.rec.push({ t, eye: S.eyeAng ? S.eyeAng.map(a => a / D2R) : [], eS: E.S / D2R, op: S.opAng / D2R, jaw: S.jawAng / D2R, mth: F.AN.mouth ? [F.AN.mouth.cur.jaw, F.AN.mouth.cur.premax, F.AN.mouth.cur.op, F.AN.mouth.cur.br, F.AN.mouth.evn] : null, rate: S.rate, hr, brake: S.brake, steer: F.steer, intent: F.INTENT,
+    fth: F.FINS.map(f => +f.th.length().toFixed(3)), pec: F.AN.pecs.map(pc => [pc.side, pc.cmd.sweep / D2R, pc.cmd.sig]), ray: F.AN.rays.map(r => r.th.slice()), veil: S.veil || null }); if (S.rec.length > 3000) S.rec.shift(); }
 }
 if (Q.get("debug") === "1") {
-  window.__anat = () => AN.S && ({ eyes: AN.eyes.length, ops: AN.ops.length, jaw: !!AN.jaw, pecs: AN.pecs.length, rays: AN.rays.length, groups: [...new Set(AN.rays.map(r => r.group))], opInfo: AN.opInfo, jawInfo: AN.jawInfo, eyeInfo: AN.eyeInfo, noseTip: AN.noseTip, finInfo: AN.finInfo, saccades: AN.S.eye.n, S: { eff: AN.S.eff, rate: AN.S.rate, pecHz: AN.S.pecHz, brake: AN.S.brake } });
-  window.__anatRecOn = () => { window.__anatRec = true; AN.S.rec.length = 0; };
-  window.__anatRecGet = () => AN.S.rec;
-  window.__anatLog = () => AN.S.eye.log;
-  window.__anatMeas = () => ({ eye: AN.eyes.map(e => relAng(e.bone, 1) / D2R), op: AN.ops.map(o => relAng(o.bone, 1) / D2R), jaw: AN.jaw ? relAng(AN.jaw.bone, 0) / D2R : null, pec: AN.pecs.map(pc => relAng(pc.hinge, 1) / D2R),
-    ray: AN.rays.map(r => ({ g: r.group, k: r.k, th: r.bones.map(b => relAngAxis(b, r.a)) })), nan: !AN.S.nanCheck });
+  window.__anat = () => F.AN.S && ({ eyes: F.AN.eyes.length, ops: F.AN.ops.length, jaw: !!F.AN.jaw, pecs: F.AN.pecs.length, rays: F.AN.rays.length, groups: [...new Set(F.AN.rays.map(r => r.group))], opInfo: F.AN.opInfo, jawInfo: F.AN.jawInfo, eyeInfo: F.AN.eyeInfo, noseTip: F.AN.noseTip, finInfo: F.AN.finInfo, saccades: F.AN.S.eye.n, S: { eff: F.AN.S.eff, rate: F.AN.S.rate, pecHz: F.AN.S.pecHz, brake: F.AN.S.brake } });
+  window.__anatRecOn = () => { window.__anatRec = true; F.AN.S.rec.length = 0; };
+  window.__anatRecGet = () => F.AN.S.rec;
+  window.__anatLog = () => F.AN.S.eye.log;
+  window.__anatMeas = () => ({ eye: F.AN.eyes.map(e => relAng(e.bone, 1) / D2R), op: F.AN.ops.map(o => relAng(o.bone, 1) / D2R), jaw: F.AN.jaw ? relAng(F.AN.jaw.bone, 0) / D2R : null, pec: F.AN.pecs.map(pc => relAng(pc.hinge, 1) / D2R),
+    ray: F.AN.rays.map(r => ({ g: r.group, k: r.k, th: r.bones.map(b => relAngAxis(b, r.a)) })), nan: !F.AN.S.nanCheck });
 }
 
 
-let SPINE_SET = null;
 function stretchB(sm, rest) {   // debug (non-rigged models): edge stretch vs rest by dominant-bone class: body (spine/head), tail (tw>0.72), fins (rays / pectorals / other fin bones)
   sm.updateMatrixWorld(true); sm.skeleton.update();
   const geo = sm.geometry, ix = geo.index.array, nV = geo.attributes.position.count, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, bn = sm.skeleton.bones, cls = new Uint8Array(nV), v = new THREE.Vector3(), cur = new Float32Array(nV * 3);
   for (let i = 0; i < nV; i++) { let bk = 0, bw = -1; for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > bw) { bw = sw.getComponent(i, k); bk = k; } const b = bn[si.getComponent(i, bk)], u = b.userData;
-    cls[i] = (u.role === "ray" || u.own || u.role === "pec") ? 2 : (SPINE_SET && SPINE_SET.has(b) || (u.tw || 0) < 0.19 ? 0 : ((u.tw || 0) > 0.72 ? 1 : 2));
+    cls[i] = (u.role === "ray" || u.own || u.role === "pec") ? 2 : (F.SPINE_SET && F.SPINE_SET.has(b) || (u.tw || 0) < 0.19 ? 0 : ((u.tw || 0) > 0.72 ? 1 : 2));
     sm.getVertexPosition(i, v); cur.set([v.x, v.y, v.z], i * 3); }
   const R = [[], [], []], seen = new Set();
   for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) { const a = ix[t + k], b = ix[t + (k + 1) % 3], key = Math.min(a, b) * nV + Math.max(a, b); if (seen.has(key)) continue; seen.add(key);
@@ -1044,29 +1313,30 @@ function stretchB(sm, rest) {   // debug (non-rigged models): edge stretch vs re
 }
 
 // debug probe (?debug=1): where the head points vs where the fish moves — 3D and on screen
-if (Q.get("debug") === "1") { window.__outer = outer; window.__P = P; window.__V = V; }
-if (Q.get("debug") === "1") window.__bones = () => bones.map(b => [b.name.replace('_Armature',''), +(b.userData.tw || 0).toFixed(2), b.children.some(c => c.isBone) ? '' : 'leaf']);
-if (Q.get("debug") === "1") window.__fins = () => FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), +f.th.length().toFixed(2)]).sort((a,b)=>b[2]-a[2]).slice(0,6);
-if (Q.get("debug") === "1") window.__pop = () => { const o = { ...POP, frameMs: +(lastDt * 1000).toFixed(1), body: +(BODY_L * ZOOM).toFixed(2) }; for (const k in POP) POP[k] = 0; return o; };
+if (Q.get("debug") === "1") { for (const [k, g] of [["__outer", f => f.outer], ["__P", f => f.P], ["__V", f => f.V]]) Object.defineProperty(window, k, { get: () => g(FISH[0]) });   /* fish 0 */ }
+if (Q.get("debug") === "1") window.__bones = () => F.bones.map(b => [b.name.replace('_Armature',''), +(b.userData.tw || 0).toFixed(2), b.children.some(c => c.isBone) ? '' : 'leaf']);
+if (Q.get("debug") === "1") window.__finMeta = () => F.FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), !!f.tailV, f.dd, +f.k.toFixed(2), +f.c.toFixed(2), f.g == null ? 0.55 : f.g, f.mx || 1.1]);
+if (Q.get("debug") === "1") window.__fins = () => F.FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), +f.th.length().toFixed(2)]).sort((a,b)=>b[2]-a[2]).slice(0,6);
+if (Q.get("debug") === "1") window.__pop = () => { const o = { ...POP, frameMs: +(lastDt * 1000).toFixed(1), body: +(F.BODY_L * ZOOM).toFixed(2) }; for (const k in POP) POP[k] = 0; return o; };
 if (Q.get("debug") === "1") window.__dbg = () => {
-  if (bones.length < 3) return null;
-  let hb = bones[0], tb = bones[0];
-  for (const bn of bones) { if ((bn.userData.tw ?? 0) < (hb.userData.tw ?? 0)) hb = bn; if ((bn.userData.tw ?? 0) > (tb.userData.tw ?? 0)) tb = bn; }
-  outer.updateMatrixWorld(true);
+  if (F.bones.length < 3) return null;
+  let hb = F.bones[0], tb = F.bones[0];
+  for (const bn of F.bones) { if ((bn.userData.tw ?? 0) < (hb.userData.tw ?? 0)) hb = bn; if ((bn.userData.tw ?? 0) > (tb.userData.tw ?? 0)) tb = bn; }
+  F.outer.updateMatrixWorld(true);
   const h = hb.getWorldPosition(new THREE.Vector3()), tl = tb.getWorldPosition(new THREE.Vector3());
   const head = h.clone().sub(tl).normalize();
   const sp = v => { const a = v.clone().project(cam); return [a.x * innerWidth / 2, a.y * innerHeight / 2]; };
-  const ph = sp(h), pt = sp(tl), p0 = sp(P), p1 = sp(P.clone().addScaledVector(V, 0.5));
+  const ph = sp(h), pt = sp(tl), p0 = sp(F.P), p1 = sp(F.P.clone().addScaledVector(F.V, 0.5));
   const ang2 = (a, b) => { const d = Math.atan2(a[1], a[0]) - Math.atan2(b[1], b[0]); return Math.abs(((d + 3 * Math.PI) % (2 * Math.PI)) - Math.PI) * 180 / Math.PI; };
-  return { deg3d: head.angleTo(V) * 180 / Math.PI,
+  return { deg3d: head.angleTo(F.V) * 180 / Math.PI,
            degScreen: ang2([ph[0] - pt[0], ph[1] - pt[1]], [p1[0] - p0[0], p1[1] - p0[1]]),
-           V: V.toArray().map(x => +x.toFixed(2)), head: head.toArray().map(x => +x.toFixed(2)),
+           V: F.V.toArray().map(x => +x.toFixed(2)), head: head.toArray().map(x => +x.toFixed(2)),
            scr: [innerWidth / 2 + p0[0], innerHeight / 2 - p0[1]], scrHead: [innerWidth / 2 + ph[0], innerHeight / 2 - ph[1]],
-           ...(() => { outer.updateMatrixWorld(true); let tp = 0, bp = 0, fp = 0; for (const bn of bones) { tipOf(bn, _bp); const e = edgeAt(_bp.z); const o = Math.max(Math.abs(_bp.x) - e.x, Math.abs(_bp.y) - e.y); const leaf = !bn.children.some(c => c.isBone); if ((bn.userData.tw || 0) > 0.35) tp = Math.max(tp, o); else if (!leaf) bp = Math.max(bp, o); else fp = Math.max(fp, o); } return { tailPen: +tp.toFixed(3), bodyPen: +bp.toFixed(3), finPen: +fp.toFixed(3) }; })(),
-           finMean: FINS.length ? +(FINS.reduce((s, f) => s + f.th.length(), 0) / FINS.length).toFixed(3) : 0, finMax: FINS.length ? +Math.max(...FINS.map(f => f.th.length())).toFixed(3) : 0, nFins: FINS.length,
-           pressLat: +pressLat.toFixed(2), impact: +impact.toFixed(2), wallHits, tailHits, yawRate: +yawRate.toFixed(3), slip: +(VEL.angleTo(V) * 180 / Math.PI).toFixed(1), atWall,
-           gait, P: P.toArray().map(x => +x.toFixed(2)), W: (({x, y}) => [+x.toFixed(2), +y.toFixed(2)])(walls(P.z)), camZ: +cam.position.z.toFixed(2), zoom: +ZOOM.toFixed(2), ghost: +ghostMat.opacity.toFixed(2), vz: +V.z.toFixed(2), beat: +beat.toFixed(2), steer: +steer.toFixed(2), speed: +speed.toFixed(2), bendSign: BEND_SIGN,
-           tailLat: +tl.clone().sub(P).dot(LAT.clone().crossVectors(UPV, V).normalize()).toFixed(3) };
+           ...(() => { F.outer.updateMatrixWorld(true); let tp = 0, bp = 0, fp = 0; for (const bn of F.bones) { tipOf(bn, _bp); const e = edgeAt(_bp.z); const o = Math.max(Math.abs(_bp.x) - e.x, Math.abs(_bp.y) - e.y); const leaf = !bn.children.some(c => c.isBone); if ((bn.userData.tw || 0) > 0.35) tp = Math.max(tp, o); else if (!leaf) bp = Math.max(bp, o); else fp = Math.max(fp, o); } return { tailPen: +tp.toFixed(3), bodyPen: +bp.toFixed(3), finPen: +fp.toFixed(3) }; })(),
+           finMean: F.FINS.length ? +(F.FINS.reduce((s, f) => s + f.th.length(), 0) / F.FINS.length).toFixed(3) : 0, finMax: F.FINS.length ? +Math.max(...FINS.map(f => f.th.length())).toFixed(3) : 0, nFins: F.FINS.length,
+           pressLat: +F.pressLat.toFixed(2), impact: +F.impact.toFixed(2), wallHits: F.wallHits, tailHits: F.tailHits, yawRate: +F.yawRate.toFixed(3), slip: +(F.VEL.angleTo(F.V) * 180 / Math.PI).toFixed(1), atWall: F.atWall,
+           gait: F.gait, P: F.P.toArray().map(x => +x.toFixed(2)), W: (({x, y}) => [+x.toFixed(2), +y.toFixed(2)])(walls(F.P.z)), camZ: +cam.position.z.toFixed(2), zoom: +ZOOM.toFixed(2), ghost: +ghostMat.opacity.toFixed(2), vz: +F.V.z.toFixed(2), beat: +F.beat.toFixed(2), steer: +F.steer.toFixed(2), speed: +F.speed.toFixed(2), bendSign: F.BEND_SIGN,
+           tailLat: +tl.clone().sub(F.P).dot(LAT.clone().crossVectors(UPV, F.V).normalize()).toFixed(3) };
 };
 
 
@@ -1075,15 +1345,15 @@ if (Q.get("debug") === "1") {
   const TS = []; window.__ts = () => TS; window.__cam = cam; window.__ctl = controls;
   // mouth/gill test hooks (models carrying geometry.userData.mouthRig): __pose(on) freezes the fish at rest; __view(name) sets the test camera (root frame, fov 30, distance 2.33*HL)
   window.__pose = on => { POSE = !!on; return POSE; };
-  const poseApply = () => { for (const b of AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } if (AN.mouth) mouthPose(); RIG.sm.updateMatrixWorld(true); RIG.sm.skeleton.update(); };
-  window.__forceMouth = o => { const M = AN.mouth; if (!M) return null; M.force = o ? { jaw: o.jaw || 0, premax: o.premax || 0, op: o.op || 0, br: o.br || 0 } : null; poseApply(); return M.force; };
+  const poseApply = () => { for (const b of F.AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } if (F.AN.mouth) mouthPose(); F.RIG.sm.updateMatrixWorld(true); F.RIG.sm.skeleton.update(); };
+  window.__forceMouth = o => { const M = F.AN.mouth; if (!M) return null; M.force = o ? { jaw: o.jaw || 0, premax: o.premax || 0, op: o.op || 0, br: o.br || 0 } : null; poseApply(); return M.force; };
   window.__mouthEvent = (k, u) => mouthEvent(k, u);
-  window.__events = on => { const M = AN.mouth; if (!M) return null; M.eventsOn = !!on; if (!on) M.act = null; return M.eventsOn; };
-  window.__event = name => { const M = AN.mouth; if (!M) return null; M.act = { kind: name, t0: AN.S.ts || 0, n: name === "prot" ? 3 : 1 }; return name; };
-  window.__seamGap = () => { const mr = RIG.sm.geometry.userData.mouthRig, sm = RIG.sm, a = new THREE.Vector3(), b = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); let m = 0, tp = mr.twinPairs;
+  window.__events = on => { const M = F.AN.mouth; if (!M) return null; M.eventsOn = !!on; if (!on) M.act = null; return M.eventsOn; };
+  window.__event = name => { const M = F.AN.mouth; if (!M) return null; M.act = { kind: name, t0: F.AN.S.ts || 0, n: name === "prot" ? 3 : 1 }; return name; };
+  window.__seamGap = () => { const mr = F.RIG.sm.geometry.userData.mouthRig, sm = F.RIG.sm, a = new THREE.Vector3(), b = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); let m = 0, tp = mr.twinPairs;
     for (let k = 0; k < tp.length; k += 2) { sm.getVertexPosition(tp[k], a); sm.getVertexPosition(tp[k + 1], b); m = Math.max(m, a.distanceTo(b)); } return m; };
   window.__mouth = () => {
-    const M = AN.mouth, sm = RIG.sm, mr = sm.geometry.userData.mouthRig; if (!M) return null; sm.updateMatrixWorld(true); sm.skeleton.update();
+    const M = F.AN.mouth, sm = F.RIG.sm, mr = sm.geometry.userData.mouthRig; if (!M) return null; sm.updateMatrixWorld(true); sm.skeleton.update();
     const gp = i => sm.getVertexPosition(i, new THREE.Vector3()), lo = mr.lipLo, up = mr.lipUpR2R, D = mr.d;
     const e2 = new THREE.Vector3(0, 1, 0).cross(new THREE.Vector3(1, 0, 0)).set(0, 0, 0); { const d = new THREE.Vector3(...D), x = new THREE.Vector3(1, 0, 0); e2.crossVectors(d, x).normalize(); }
     const poly = up.concat(lo.slice().reverse().slice(1, -1)).map(i => { const p = gp(i); return [p.x, p.dot(e2)]; });
@@ -1093,7 +1363,7 @@ if (Q.get("debug") === "1") {
   };
   // T7: per-edge |ratio-1| by class from _part/_wgt (edge class = its less-rigid endpoint), plus flipped class-0 triangles
   window.__stretchMouth = () => {
-    const sm = RIG.sm, g = sm.geometry, mr = g.userData.mouthRig, pt = g.attributes._part, wg = g.attributes._wgt, pa = g.attributes.position, ix = g.index.array, nV = pa.count, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bn = sm.skeleton.bones;
+    const sm = F.RIG.sm, g = sm.geometry, mr = g.userData.mouthRig, pt = g.attributes._part, wg = g.attributes._wgt, pa = g.attributes.position, ix = g.index.array, nV = pa.count, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bn = sm.skeleton.bones;
     sm.updateMatrixWorld(true); sm.skeleton.update();
     const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
     const TH = { hyoid: 0.35, cheek: 0.55, rostral: 0.55, rictus: 0.55, band: 0.60 };
@@ -1121,7 +1391,7 @@ if (Q.get("debug") === "1") {
     out.flipped = flip; out.tris0 = n0; out.pbLoc = PBL; out.flipLoc = FL; return out;
   };
   window.__view = name => {
-    const mr = RIG && RIG.sm.geometry.userData.mouthRig, root = window.__root; if (!mr || !root) return null;
+    const mr = F.RIG && F.RIG.sm.geometry.userData.mouthRig, root = window.__root; if (!mr || !root) return null;
     const V3 = THREE.Vector3, v = a => new V3(...a), S = v(mr.S), d = v(mr.d), C0 = v(mr.C0), dist = 2.33 * mr.HL, X = new V3(1, 0, 0), D = Math.PI / 180;
     let pos, tgt, up = new V3(0, 1, 0);
     const frontPos = S.clone().addScaledVector(d, dist);
@@ -1137,47 +1407,51 @@ if (Q.get("debug") === "1") {
     cam.fov = 30; cam.near = 0.01; cam.updateProjectionMatrix(); cam.position.copy(wp); cam.up.copy(up.transformDirection(root.matrixWorld)); cam.lookAt(wt); controls.target.copy(wt); controls.update();
     return { pos: wp.toArray(), tgt: wt.toArray() };
   };
-  window.__turn = (x, y, z) => { TGT.set(x, y, z); wallTgt = false; nextPick = performance.now() / 1000 + 4; };   // force a C-turn: new swim target
+  window.__wt = null; window.__wtOn = () => { window.__wt = []; window.__wtRec = dt => { const o = {}; headOver(o); const pc = Object.assign({}, POP); for (const k in POP) POP[k] = 0;
+      window.__wt.push({ dt, fi: F.i, P: [F.P.x, F.P.y, F.P.z], V: [F.V.x, F.V.y, F.V.z], VEL: [F.VEL.x, F.VEL.y, F.VEL.z], yaw: Math.atan2(F.V.x, F.V.z), yr: F.yawRate, sp: F.speed, st: F.steer, pop: pc, ho: o, aw: F.atWall, wt: F.wallTgt, tg: [F.TGT.x, F.TGT.y, F.TGT.z], pl: F.pressLat, im: F.impact }); }; };
+  window.__wtGet = () => window.__wt;
+  window.__ram = (side, y, z) => { z = F.P.z; const w = walls(z); F.TGT.set(side === "l" ? -w.x * 1.25 : side === "r" ? w.x * 1.25 : (y || 0), side === "t" ? w.y * 1.25 : side === "b" ? -w.y * 1.25 : (y || 0), z); F.wallTgt = true; F.nextPick = performance.now() / 1000 + 9; };
+  window.__turn = (x, y, z) => { F.TGT.set(x, y, z); F.wallTgt = false; F.nextPick = performance.now() / 1000 + 4; };   // force a C-turn: new swim target
   let EDG = null; const _cur = [];
   window.__stretch = () => {
-    if (!RIG) return null;
-    const geo = RIG.sm.geometry, pa = geo.attributes.position, ix = geo.index.array, nV = pa.count;
+    if (!F.RIG) return null;
+    const geo = F.RIG.sm.geometry, pa = geo.attributes.position, ix = geo.index.array, nV = pa.count;
     if (!EDG) { const set = new Set(), e = []; for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) { const a = ix[t + k], b = ix[t + (k + 1) % 3], lo = Math.min(a, b), hi = Math.max(a, b), key = lo * nV + hi; if (!set.has(key)) { set.add(key); e.push(lo, hi); } } EDG = Uint32Array.from(e); }
-    RIG.sm.updateMatrixWorld(true); RIG.sm.skeleton.update();
-    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { RIG.sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
-    let WORST; window.__worst = []; const R = [[], [], []], reg = RIG.region;   // body / tail / fin
+    F.RIG.sm.updateMatrixWorld(true); F.RIG.sm.skeleton.update();
+    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { F.RIG.sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
+    let WORST; window.__worst = []; const R = [[], [], []], reg = F.RIG.region;   // body / tail / fin
     for (let k = 0; k < EDG.length; k += 2) {
       const a = EDG[k], b = EDG[k + 1], rl = Math.hypot(pa.getX(a) - pa.getX(b), pa.getY(a) - pa.getY(b), pa.getZ(a) - pa.getZ(b)); if (rl < 0.015) continue;
       const cl = Math.hypot(cur[a * 3] - cur[b * 3], cur[a * 3 + 1] - cur[b * 3 + 1], cur[a * 3 + 2] - cur[b * 3 + 2]), r = Math.max(reg[a], reg[b]);
       R[r === 0 ? 0 : r === 1 ? 1 : 2].push(cl / rl);
-      if (cl / rl > 1.8 || cl / rl < 0.4) (WORST = window.__worst || (window.__worst = [])).push([cl / rl, r, +pa.getX(a).toFixed(2), +pa.getY(a).toFixed(2), +pa.getZ(a).toFixed(2), RIG.sm.skeleton.bones[geo.attributes.skinIndex.getX(a)].name, RIG.sm.skeleton.bones[geo.attributes.skinIndex.getX(b)].name]);
+      if (cl / rl > 1.8 || cl / rl < 0.4) (WORST = window.__worst || (window.__worst = [])).push([cl / rl, r, +pa.getX(a).toFixed(2), +pa.getY(a).toFixed(2), +pa.getZ(a).toFixed(2), F.RIG.sm.skeleton.bones[geo.attributes.skinIndex.getX(a)].name, F.RIG.sm.skeleton.bones[geo.attributes.skinIndex.getX(b)].name]);
     }
     const st = a => { a.sort((x, y) => x - y); const n = a.length; return n ? { n, max: +a[n - 1].toFixed(2), p999: +a[Math.floor(n * 0.999)].toFixed(2), min: +a[0].toFixed(2) } : null; };
     // tail-sheet quality: roll (twist about the chain axis, cumulative per chain), min adjacent-chain angle vs rest (crossing), edge-on + flipped tail triangles
-    if (!RIG.tt) { const tt = []; for (let t = 0; t < ix.length; t += 3) if (reg[ix[t]] === 1 && reg[ix[t + 1]] === 1 && reg[ix[t + 2]] === 1) tt.push(t); RIG.tt = tt;
-      RIG.rn = new Float32Array(tt.length * 3); const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3();
-      tt.forEach((t, i) => { A.fromBufferAttribute(pa, ix[t]); B_.fromBufferAttribute(pa, ix[t + 1]); C.fromBufferAttribute(pa, ix[t + 2]); B_.sub(A); C.sub(A); B_.cross(C).normalize(); RIG.rn.set([B_.x, B_.y, B_.z], i * 3); }); }
+    if (!F.RIG.tt) { const tt = []; for (let t = 0; t < ix.length; t += 3) if (reg[ix[t]] === 1 && reg[ix[t + 1]] === 1 && reg[ix[t + 2]] === 1) tt.push(t); F.RIG.tt = tt;
+      F.RIG.rn = new Float32Array(tt.length * 3); const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3();
+      tt.forEach((t, i) => { A.fromBufferAttribute(pa, ix[t]); B_.fromBufferAttribute(pa, ix[t + 1]); C.fromBufferAttribute(pa, ix[t + 2]); B_.sub(A); C.sub(A); B_.cross(C).normalize(); F.RIG.rn.set([B_.x, B_.y, B_.z], i * 3); }); }
     let edgeOn = 0, flip = 0; { const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3(), N = new THREE.Vector3(), W = new THREE.Vector3();
-      RIG.tt.forEach((t, i) => { const [a_, b_, c_] = [ix[t], ix[t + 1], ix[t + 2]]; A.fromArray(cur, a_ * 3); B_.fromArray(cur, b_ * 3); C.fromArray(cur, c_ * 3); W.copy(A).add(B_).add(C).divideScalar(3);
-        B_.sub(A); C.sub(A); N.copy(B_).cross(C).normalize(); if (N.x * RIG.rn[i * 3] + N.y * RIG.rn[i * 3 + 1] + N.z * RIG.rn[i * 3 + 2] < 0) flip++;
-        N.transformDirection(RIG.sm.matrixWorld); W.applyMatrix4(RIG.sm.matrixWorld); W.sub(cam.position).normalize(); if (Math.abs(N.dot(W)) < 0.15) edgeOn++; }); }
-    let roll = 0; for (const ch of RIG.chains) { if (ch.kind !== "tail") continue; let cum = 0; for (const id of ch.ids) { const q = RIG.bs[id].quaternion; cum += 2 * Math.atan2(q.x * ch.dir.x + q.y * ch.dir.y + q.z * ch.dir.z, q.w); } roll = Math.max(roll, Math.abs(cum) * 180 / Math.PI); }
-    let minAng = 9, minRatio = 9; { const o = new THREE.Vector3(), pa_ = new THREE.Vector3(), pb_ = new THREE.Vector3(); RIG.bs[6].getWorldPosition(o);
-      for (const c in NB) for (const n of NB[c]) { if (+n < +c) continue; const A = RIG.chains[c], Bc = RIG.chains[n];
-        for (let k = 1; k < A.n; k++) { RIG.bs[A.ids[k]].getWorldPosition(pa_).sub(o); RIG.bs[Bc.ids[k]].getWorldPosition(pb_).sub(o);
-          const cur_ = pa_.angleTo(pb_), rest = RIG.defs[A.ids[k]].p.clone().sub(RIG.defs[6].p).angleTo(RIG.defs[Bc.ids[k]].p.clone().sub(RIG.defs[6].p)); minAng = Math.min(minAng, cur_); minRatio = Math.min(minRatio, cur_ / rest); } } }
-    const nT = RIG.tt.length;
-    return { body: st(R[0]), tail: st(R[1]), fins: st(R[2]), rollDeg: +roll.toFixed(1), minAdjDeg: +(minAng * 180 / Math.PI).toFixed(1), minAdjRatio: +minRatio.toFixed(2), edgeOn: +(edgeOn / nT).toFixed(3), flipped: +(flip / nT).toFixed(3), yaw: +yawRate.toFixed(2), steer: +steer.toFixed(2) };
+      F.RIG.tt.forEach((t, i) => { const [a_, b_, c_] = [ix[t], ix[t + 1], ix[t + 2]]; A.fromArray(cur, a_ * 3); B_.fromArray(cur, b_ * 3); C.fromArray(cur, c_ * 3); W.copy(A).add(B_).add(C).divideScalar(3);
+        B_.sub(A); C.sub(A); N.copy(B_).cross(C).normalize(); if (N.x * F.RIG.rn[i * 3] + N.y * F.RIG.rn[i * 3 + 1] + N.z * F.RIG.rn[i * 3 + 2] < 0) flip++;
+        N.transformDirection(F.RIG.sm.matrixWorld); W.applyMatrix4(F.RIG.sm.matrixWorld); W.sub(cam.position).normalize(); if (Math.abs(N.dot(W)) < 0.15) edgeOn++; }); }
+    let roll = 0; for (const ch of F.RIG.chains) { if (ch.kind !== "tail") continue; let cum = 0; for (const id of ch.ids) { const q = F.RIG.bs[id].quaternion; cum += 2 * Math.atan2(q.x * ch.dir.x + q.y * ch.dir.y + q.z * ch.dir.z, q.w); } roll = Math.max(roll, Math.abs(cum) * 180 / Math.PI); }
+    let minAng = 9, minRatio = 9; { const o = new THREE.Vector3(), pa_ = new THREE.Vector3(), pb_ = new THREE.Vector3(); F.RIG.bs[6].getWorldPosition(o);
+      for (const c in F.NB) for (const n of F.NB[c]) { if (+n < +c) continue; const A = F.RIG.chains[c], Bc = F.RIG.chains[n];
+        for (let k = 1; k < A.n; k++) { F.RIG.bs[A.ids[k]].getWorldPosition(pa_).sub(o); F.RIG.bs[Bc.ids[k]].getWorldPosition(pb_).sub(o);
+          const cur_ = pa_.angleTo(pb_), rest = F.RIG.defs[A.ids[k]].p.clone().sub(F.RIG.defs[6].p).angleTo(F.RIG.defs[Bc.ids[k]].p.clone().sub(F.RIG.defs[6].p)); minAng = Math.min(minAng, cur_); minRatio = Math.min(minRatio, cur_ / rest); } } }
+    const nT = F.RIG.tt.length;
+    return { body: st(R[0]), tail: st(R[1]), fins: st(R[2]), rollDeg: +roll.toFixed(1), minAdjDeg: +(minAng * 180 / Math.PI).toFixed(1), minAdjRatio: +minRatio.toFixed(2), edgeOn: +(edgeOn / nT).toFixed(3), flipped: +(flip / nT).toFixed(3), yaw: +F.yawRate.toFixed(2), steer: +F.steer.toFixed(2) };
   };
-  window.__chainInfo = () => RIG.chains.map(c => [c.name, c.dir.toArray().map(v => +v.toFixed(2)), c.nrm.toArray().map(v => +v.toFixed(2)), c.rax.toArray().map(v => +v.toFixed(2))]);
-  window.__rig = () => RIG && { bones: RIG.bs.length, spine: RIG.bs.filter(b => b.userData.role === "spine").length, chains: RIG.chains.map(c => [c.name, c.n, +c.share.toFixed(0), +(c.sigma).toFixed(2)]),
-    nanBones: RIG.bs.filter(b => ![...b.position.toArray(), ...b.quaternion.toArray()].every(Number.isFinite)).length, regionCounts: [0, 1, 2].map(r => RIG.region.filter(x => x === r).length) };
+  window.__chainInfo = () => F.RIG.chains.map(c => [c.name, c.dir.toArray().map(v => +v.toFixed(2)), c.nrm.toArray().map(v => +v.toFixed(2)), c.rax.toArray().map(v => +v.toFixed(2))]);
+  window.__rig = () => F.RIG && { bones: F.RIG.bs.length, spine: F.RIG.bs.filter(b => b.userData.role === "spine").length, chains: F.RIG.chains.map(c => [c.name, c.n, +c.share.toFixed(0), +(c.sigma).toFixed(2)]),
+    nanBones: F.RIG.bs.filter(b => ![...b.position.toArray(), ...b.quaternion.toArray()].every(Number.isFinite)).length, regionCounts: [0, 1, 2].map(r => F.RIG.region.filter(x => x === r).length) };
   window.__rec = () => {
-    if (!RIG) return; outer.updateMatrixWorld(true);
-    const lat = bn => outer.worldToLocal(bn.getWorldPosition(new THREE.Vector3())).x, tipLat = bn => outer.worldToLocal(tipOf(bn, new THREE.Vector3())).x;
-    const leafs = RIG.bs.filter(b => b.userData.role === "tail" && !b.children.some(c => c.isBone));
-    const finite = RIG.bs.every(b => b.matrixWorld.elements.every(Number.isFinite));
-    TS.push({ t: performance.now() / 1000, base: lat(RIG.bs[6]), head: lat(RIG.bs[0]), tip0: tipLat(leafs[0]), tipMean: leafs.reduce((s, b) => s + tipLat(b), 0) / leafs.length, tips: leafs.map(tipLat), beat, gait, finite });
+    if (!F.RIG) return; F.outer.updateMatrixWorld(true);
+    const lat = bn => F.outer.worldToLocal(bn.getWorldPosition(new THREE.Vector3())).x, tipLat = bn => F.outer.worldToLocal(tipOf(bn, new THREE.Vector3())).x;
+    const leafs = F.RIG.bs.filter(b => b.userData.role === "tail" && !b.children.some(c => c.isBone));
+    const finite = F.RIG.bs.every(b => b.matrixWorld.elements.every(Number.isFinite));
+    TS.push({ t: performance.now() / 1000, base: lat(F.RIG.bs[6]), head: lat(F.RIG.bs[0]), tip0: tipLat(leafs[0]), tipMean: leafs.reduce((s, b) => s + tipLat(b), 0) / leafs.length, tips: leafs.map(tipLat), beat: F.beat, gait: F.gait, finite });
     if (TS.length > 4000) TS.shift();
   };
 }
@@ -1189,13 +1463,12 @@ function toggleFull() {
   else { const el = document.documentElement; const r = (el.requestFullscreen || el.webkitRequestFullscreen).call(el); if (r && r.catch) r.catch(() => {}); }
 }
 if (DISPLAY) {
-  cv.addEventListener("click", () => { if (!isFull()) toggleFull(); });
   addEventListener("keydown", e => { if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFull(); });
   // scroll wheel = zoom = fish size (0.5×–3.5×); the camera and the tank never move
   addEventListener("wheel", e => { e.preventDefault(); zoomTo = clamp(zoomTo * Math.exp(-e.deltaY * 0.0012), 0.5, 3.5); zoomT = performance.now() / 1000; }, { passive: false });
   scene.add(ghost);
   const toSettings = () => {
-    const u = new URLSearchParams({ display: "0", m: MODEL, rx: CORR.x, ry: CORR.y, rz: CORR.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0 });
+    const C = FISH[0].CORR, u = new URLSearchParams({ display: "0", m: FISH[0].BASE, rx: C.x, ry: C.y, rz: C.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0, ...newQS() });
     if (isFull()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     location.href = location.pathname + "?" + u;
   };
@@ -1203,56 +1476,104 @@ if (DISPLAY) {
   addEventListener("keydown", e => { if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) toSettings(); });
   let idleT = 0; const wake = () => { document.body.classList.remove("idle"); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add("idle"), 3000); };
   addEventListener("pointermove", wake); wake();
-  pickTarget(0);
 }
-function loop() {
-  const now = performance.now(); let dt = (now - last) / 1000; last = now; dt = Math.min(dt, 0.05); lastDt = Math.max(lastDt * 0.9, dt); const t = now / 1000;
-  corr.rotation.set(CORR.x * D2R, CORR.y * D2R, CORR.z * D2R);
+// ---- frame loop: pauses when the tab is hidden (no rAF, clock reset on return -> no time jump); Low caps at ~30 fps; Auto watches the frame time ----
+let rafId = 0, lastInfo = "";
+const AUTO = { from: 0, w0: 0, n: 0, s: new Float32Array(2048) };
+function autoReset(now) { AUTO.n = 0; AUTO.w0 = 0; AUTO.from = now + 1500; }   // 1.5 s warm-up (shader compile, GLB upload) before sampling
+function autoSample(now, ms) {   // Auto: starts High; the median frame time over a 3 s window above 25 ms steps to Low (never back within the session)
+  if (QMODE !== "auto" || QEFF !== "high" || building || now < AUTO.from || ms > 500) return;
+  if (!AUTO.w0) AUTO.w0 = now;
+  if (AUTO.n < AUTO.s.length) AUTO.s[AUTO.n++] = ms;
+  if (now - AUTO.w0 >= 3000) {
+    const a = AUTO.s.slice(0, AUTO.n).sort(), med = a[a.length >> 1]; AUTO.med = med; AUTO.n = 0; AUTO.w0 = 0;
+    if (med > 25) { console.log("auto quality: median frame " + med.toFixed(1) + " ms > 25 -> Low"); setEff("low"); }
+  }
+}
+function stepZoom(dt, t) { ZG += (zoomTo - ZG) * (1 - Math.exp(-dt * 8)); updateGhost(t); }
+const _arrowDir = new THREE.Vector3();
+function stepFish(f, dt, t) {
+  F = f; ZOOM = ZG * f.SZ;   // ZOOM = this fish's effective size (global zoom x per-fish species factor)
+  F.corr.rotation.set(F.CORR.x * D2R, F.CORR.y * D2R, F.CORR.z * D2R);
   if (DISPLAY) wander(dt, t);
   else if (SWIM) {                                         // move in a slow horizontal circle + face motion (like the school)
     const r = 2.2, x = Math.cos(t * 0.5) * r, z = Math.sin(t * 0.5) * r;
-    outer.position.set(x, 0, z);
+    F.outer.position.set(x, 0, z);
     const vx = -Math.sin(t * 0.5), vz = Math.cos(t * 0.5);
-    tmp.set(x + vx, 0, z + vz); outer.up.set(0, 1, 0); outer.lookAt(tmp);
-    ARROW.position.copy(outer.position); ARROW.setDirection(new THREE.Vector3(vx, 0, vz).normalize()); ARROW.visible = true;
-  } else { outer.position.set(0, 0, 0); outer.quaternion.identity(); ARROW.visible = false; }
-  for (const bn of bones) if (bn.userData.q0) bn.quaternion.copy(bn.userData.q0);  // rest FIRST each frame → symmetric wave, no accumulation (matches the school)
-  if (CLIP && mixer && !POSE) mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * beat + 0.9 * Math.abs(steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
-  if (DISPLAY && PROC && bones.length > 2) {
-    const amp0 = 0.08 + 0.92 * beat, bendC = clamp(steer * 1.2, -2.6, 2.6) * 0.10 * BENDK * BEND_SIGN;   // more flex: the body really curls into a turn
-    for (const bn of bones) {
+    tmp.set(x + vx, 0, z + vz); F.outer.up.set(0, 1, 0); F.outer.lookAt(tmp);
+    ARROW.position.copy(F.outer.position); ARROW.setDirection(_arrowDir.set(vx, 0, vz).normalize()); ARROW.visible = true;
+  } else { F.outer.position.set(0, 0, 0); F.outer.quaternion.identity(); ARROW.visible = false; }
+  for (const bn of F.bones) if (bn.userData.q0) bn.quaternion.copy(bn.userData.q0);  // rest FIRST each frame → symmetric wave, no accumulation (matches the school)
+  if (CLIP && F.mixer && !POSE) F.mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * F.beat + 0.9 * Math.abs(F.steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
+  if (DISPLAY && PROC && F.bones.length > 2) {
+    const amp0 = 0.08 + 0.92 * F.beat, bendC = clamp(F.steer * 1.2, -2.6, 2.6) * 0.10 * F.BENDK * F.BEND_SIGN;   // more flex: the body really curls into a turn
+    for (const bn of F.bones) {
       const tw = bn.userData.tw || 0, u = bn.userData;
       if (u.role === "tail" || u.role === "fin" || u.own || u.dead) continue;      // rigged tail/fins: drag springs + ripple only (finStep)
       const env = 0.12 + 0.88 * tw * tw;                                         // small head yaw, big tail sweep
       const curv = tw < 0.15 ? 0 : tw < 0.72 ? 1.9 * Math.pow((tw - 0.15) / 0.57, 1.3) : 1.9 - 11.5 * (tw - 0.72);   // rigid head/gills → progressively rubbery toward the tail base, then the tail counter-flick
-      const wv = Math.sin(phase - tw * 5.65) * env;                              // k = 0.9·2π → λ ≈ 1.1 body
+      const wv = Math.sin(F.phase - tw * 5.65) * env;                              // k = 0.9·2π → λ ≈ 1.1 body
       // spring: stiff head … looser tail (natural freq stays ABOVE the beat so the stroke isn't filtered out),
       // under-damped → the tail/fins lag and overshoot on stroke starts, glides and bend changes
       const k = (1900 - 1550 * Math.min(tw, 0.75)) / ZOOM, c = 2 * Math.sqrt(k) * 0.4;   // stiff head … rubbery rear; bigger body flexes slower
-      for (const a of ["x", "y", "z"]) {                                          // every axis with a non-zero amplitude bends at once (the dominant axis keeps u.a/u.av for wallCollide)
-        if (a !== AX && !(AMPS[a] > 0)) continue;
-        const ka = a === AX ? "a" : "a_" + a, kv = a === AX ? "av" : "av_" + a, target = wv * AMPS[a] * amp0 + bendC * curv * (AMP > 0 ? AMPS[a] / AMP : 0);   // displayed amplitude = applied; the C-bend splits in the same proportion
+      for (const a of AXES) {                                          // every axis with a non-zero amplitude bends at once (the dominant axis keeps u.a/u.av for wallCollide)
+        if (a !== F.AX && !(F.AMPS[a] > 0)) continue;
+        const ka = a === F.AX ? "a" : "a_" + a, kv = a === F.AX ? "av" : "av_" + a, target = wv * F.AMPS[a] * amp0 + bendC * curv * (F.AMP > 0 ? F.AMPS[a] / F.AMP : 0);   // displayed amplitude = applied; the C-bend splits in the same proportion
         for (let n = Math.ceil(dt / 0.004), sdt = dt / n; n > 0; n--) {     // sub-steps: stable on slow frames
           u[kv] = (u[kv] || 0) + (k * (target - (u[ka] || 0)) - c * (u[kv] || 0)) * sdt; u[ka] = (u[ka] || 0) + u[kv] * sdt;
         }
         if (a === "x") bn.rotateX(u[ka]); else if (a === "y") bn.rotateY(u[ka]); else bn.rotateZ(u[ka]);
       }
     }
-  } else if (PROC && bones.length > 2 && !POSE) {
-    const ph = DISPLAY ? phase : t * 4.5, bank = DISPLAY ? clamp(turn * 4, -1, 1) * 0.05 : 0;   // bank: bend into the turn (as the school)
-    for (let i = 0; i < bones.length; i++) { const tw = bones[i].userData.tw || 0, w = Math.sin(ph - tw * 5) * tw * tw; for (const ax of ["x", "y", "z"]) { const a = w * AMPS[ax] + (ax === AX ? bank * tw * tw : 0); if (ax === "x") bones[i].rotateX(a); else if (ax === "y") bones[i].rotateY(a); else bones[i].rotateZ(a); } }
+  } else if (PROC && F.bones.length > 2 && !POSE) {
+    const ph = DISPLAY ? F.phase : t * 4.5, bank = DISPLAY ? clamp(F.turn * 4, -1, 1) * 0.05 : 0;   // bank: bend into the turn (as the school)
+    for (let i = 0; i < F.bones.length; i++) { const tw = F.bones[i].userData.tw || 0, w = Math.sin(ph - tw * 5) * tw * tw; for (const ax of AXES) { const a = w * F.AMPS[ax] + (ax === F.AX ? bank * tw * tw : 0); if (ax === "x") F.bones[i].rotateX(a); else if (ax === "y") F.bones[i].rotateY(a); else F.bones[i].rotateZ(a); } }
   }
-  if (DISPLAY && bones.length > 2) { finStep(dt); anatStep(dt, t); wallCollide(dt); } else anatStep(dt, t);
+  if (DISPLAY && F.bones.length > 2) { finStep(dt); anatStep(dt, t); wallCollide(dt); } else anatStep(dt, t);
+  if (window.__wtRec) window.__wtRec(dt);
   if (window.__rec) window.__rec();
-  if (window.__hold && RIG) {   // debug: hold a static test pose (spine bend / tail flap / fin flap, radians per bone) to inspect skinning + measure stretch
-    const h = window.__hold; for (const bn of bones) { bn.quaternion.copy(bn.userData.q0); const u = bn.userData;
+  if (window.__hold && F.RIG) {   // debug: hold a static test pose (spine bend / tail flap / fin flap, radians per bone) to inspect skinning + measure stretch
+    const h = window.__hold; for (const bn of F.bones) { bn.quaternion.copy(bn.userData.q0); const u = bn.userData;
       if (u.role === "spine") rotBone(bn, h.spine || 0); else if (u.rax) bn.quaternion.multiply(_qf.setFromAxisAngle(u.rax, (u.role === "tail" ? h.tail : h.fin) * (h.dir || 1) || 0)); }
   }
+}
+function loop() {
+  rafId = 0;
+  if (document.hidden) return;                              // hidden tab: no rAF at all; visibilitychange restarts it
+  const now = performance.now();
+  if (QEFF === "low" && now - last < 30) { rafId = requestAnimationFrame(loop); return; }   // Low: ~30 fps cap (frames in between are skipped, not simulated)
+  let dt = (now - last) / 1000; autoSample(now, now - last); last = now; dt = Math.min(dt, 0.05); lastDt = Math.max(lastDt * 0.9, dt); const t = now / 1000;
+  window.__frames = (window.__frames | 0) + 1;
+  if (DISPLAY) stepZoom(dt, t);
+  for (const f of FISH) stepFish(f, dt, t);
+  ZOOM = ZG;
+  F = FISH[0];
   if (!DISPLAY) controls.update();
   renderer.render(scene, cam);
-  info.textContent = `${MODEL}  ·  rot X:${CORR.x}° Y:${CORR.y}° Z:${CORR.z}°  ·  bend x ${AMPS.x} y ${AMPS.y} z ${AMPS.z}  ·  swim ${SWIM ? "on (red arrow = direction)" : "off"}`;
-  requestAnimationFrame(loop);
+  const s = `${F.MODEL}  ·  rot X:${F.CORR.x}° Y:${F.CORR.y}° Z:${F.CORR.z}°  ·  bend x ${F.AMPS.x} y ${F.AMPS.y} z ${F.AMPS.z}  ·  swim ${SWIM ? "on (red arrow = direction)" : "off"}`;
+  if (s !== lastInfo) info.textContent = lastInfo = s;     // (only touch the DOM when the text changed)
+  rafId = requestAnimationFrame(loop);
 }
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
+  else if (FISH.length && !rafId) { last = performance.now(); autoReset(last); rafId = requestAnimationFrame(loop); }   // reset the clock: the hidden time is not simulated
+});
+if (Q.get("debug") === "1") {
+  window.__q = () => ({ mode: QMODE, eff: QEFF, tl: TL, n: NFISH, flist: FLIST, fish: FISH.map(f => f.MKEY), frames: window.__frames | 0, hidden: document.hidden, raf: rafId, autoMed: AUTO.med || null, pr: renderer.getPixelRatio(), aa: renderer.getContext().getContextAttributes().antialias, building });
+  window.__setEff = setEff; window.__rebuild = rebuildFish; window.__fish = () => FISH;
+  window.__placeF = (i, x, y, z, vx, vz) => { const f = FISH[i]; f.P.set(x, y, z); f.V.set(vx, 0, vz).normalize(); f.VEL.copy(f.V).multiplyScalar(0.9); };   // debug: put fish i somewhere heading somewhere
+  window.__ramF = (i, side, y, z) => { F = FISH[i]; window.__ram(side, y, z); F = FISH[0]; };   // drive fish i into a wall (debug)
+}
+// ---- start ----
+function boot() {
+  const plan = fishPlan(), fresh = []; plan.forEach((pl, i) => fresh.push(makeFish(i, pl, null, fresh)));   // state first (the original drew pickTarget(0) here, before the model loaded), then the GLBs
+  loadAll(plan).then(gs => {
+    for (const f of fresh) { assemble(f, gs[f.MKEY]); FISH.push(f); }
+    F = FISH[0]; autoReset(performance.now()); showAmps(); syncUi(); creditShow();
+    loop();
+  }).catch(err => console.warn("start failed", err));
+}
+boot();
 </script>
 <script>
 fetch("/version.txt", { cache: "no-store" }).then(r => r.ok ? r.text() : "").then(t => { document.getElementById("ver").textContent = t.trim().replace(/\s+/g, " "); }).catch(() => {});

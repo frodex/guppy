@@ -6,8 +6,10 @@ Controls: click or `F` for fullscreen, scroll to zoom, `S` for the settings view
 
 ## Pages
 
-- `/` - the betta (`site/index.html`, model `site/guppies.glb`).
-- `/goldfish` - a rigged fancy goldfish (`site/goldfish/index.html`, model `site/goldfish-natural.glb`: thin translucent fins, hinged mouth and opening gills; the older `site/goldfish.glb` is kept so cached links keep working). Same controls; settings view has the credits and a link back to `/`.
+- `/` - the betta by default (`site/index.html`, model `site/guppies.glb`), one fish.
+- `/goldfish` - a rigged fancy goldfish by default (`site/goldfish/index.html`, model `site/goldfish-natural.glb`: thin translucent fins, hinged mouth and opening gills; the older `site/goldfish.glb` is kept so cached links keep working). `site/goldfish-natural-lo.glb` is the low-poly goldfish, simplified from goldfish-natural; it is used in Low quality and for every goldfish after the second one.
+
+Both pages have the same settings view: quality (auto / high / low, `?q=`), see-through fins (`?tl=`), fish picker (betta / goldfish / mix, `?fish=betta,goldfish`) and count 1-8 (`?n=`, applies in display mode); the page only pre-selects a different fish. The settings view credits both models and links between the pages. The page pauses rendering while the tab is hidden.
 
 ## Local preview
 
