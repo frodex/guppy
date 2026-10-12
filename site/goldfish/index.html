@@ -51,7 +51,7 @@
   &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
   &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
   <div id="about"><h3>About / Credits</h3>
-    <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified and rigged here)</div>
+    <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, mouth and gills added here)</div>
     <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>).</div>
     <div>Display mode: click or F for fullscreen, scroll to zoom, S for settings.</div>
     <div>Version: <span id="ver"></span></div>
@@ -77,11 +77,42 @@ const DISPLAY = Q.get("display") === "1";                // display mode: black,
 //   bend = C-bend scale (stiffer body); fg/fmax = drag torque gain / max bend per joint (rad); rip = active tail ripple scale. URL overrides: ?amp= ?fk= ?fz= ?rip= ?rate= ?glide=
 const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, matte: true, anat: "betta", dph: 60 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
   "/goldfish.glb": { rx: 0, bx: 0.1, by: 0.4, bz: 0.0125, rig: "goldfish", rate: 0.55, glide: 2.0, speed: 0.7, fk: 0.3, fz: 0.3, rip: 1.4, fg: 0.38, fmax: 0.42, bend: 0.45, cum: 0.85, vk: 0.5, vdk: 0.5, vfl: 0.05, vspr: 1.1 } };
-const MKEY = "/goldfish.glb";   // the one model on this page
-const PRE = PRESETS[MKEY];
+const MKEY = "/goldfish-mouth.glb";   // the one model on this page (thin fins, translucent edges, hinged mouth + gills); new name because /*.glb is cached immutable
+const PRE = PRESETS["/goldfish.glb"];
 const GOLD = PRE.rig === "goldfish";
 const TUNE = k => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : 1));      // per-model motion tunables (default 1 = unchanged)
 const BENDK = TUNE("bend"), RATE = TUNE("rate"), GLIDE = TUNE("glide"), SPEEDK = TUNE("speed"), FK = TUNE("fk"), FZ = Q.has("fz") ? +Q.get("fz") : (PRE.fz || 0.24), RIP = Q.has("rip") ? +Q.get("rip") : (PRE.rip || 0);
+const TL = Q.has("tl") ? Math.max(0, Math.min(1, +Q.get("tl") || 0)) : 1, TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.35, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
+// fins/tail: alpha falls from 1 (fin<0.35) to TLMIN at the free margin, fin rays (darker/denser texture stripes, = texture luminance below its own blurred value) keep +0.25; plus a warm back-light (light behind the sheet / fish looking toward the light) scaled by _fin.
+// Order-independent on ONE double-sided mesh: alpha-to-coverage (MSAA, per-sample depth) or alpha hash (stochastic discard) - no blending, no sorting; body has fin=0 -> alpha 1 -> fully opaque.
+function patchFin(m) {
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uTL = { value: TL }; sh.uniforms.uTLMin = { value: TLMIN }; sh.uniforms.uTLGlow = { value: TLGLOW };
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float _fin;\nvarying float vFin;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvFin = _fin;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vFin;\nuniform float uTL, uTLMin, uTLGlow;\nfloat tlA = 1.0;")
+      .replace("#include <alphamap_fragment>", `#include <alphamap_fragment>
+      { float s = smoothstep(0.35, 1.0, vFin) * uTL;
+        float ray = 0.0;
+        #ifdef USE_MAP
+          float l0 = dot(texture2D(map, vMapUv).rgb, vec3(0.3, 0.59, 0.11)), l1 = dot(textureLod(map, vMapUv, 3.0).rgb, vec3(0.3, 0.59, 0.11));
+          ray = clamp((l1 - l0) / max(l1, 0.02) * 3.0, 0.0, 1.0);
+        #endif
+        tlA = mix(1.0, clamp(uTLMin + 0.25 * ray, 0.0, 1.0), s); diffuseColor.a *= tlA; }`)
+      .replace("#include <opaque_fragment>", `{ float s = smoothstep(0.2, 1.0, vFin) * uTL;
+        vec3 Ld = vec3(0.0, 1.0, 0.0);
+        #if NUM_DIR_LIGHTS > 0
+          Ld = directionalLights[0].direction;
+        #endif
+        vec3 nV = normalize(nonPerturbedNormal), vV = normalize(vViewPosition);
+        float back = clamp(-dot(nV, Ld) * 0.7 + 0.3, 0.0, 1.0) * (0.5 + 0.5 * pow(clamp(-dot(vV, Ld), 0.0, 1.0), 2.0));
+        outgoingLight += diffuseColor.rgb * vec3(1.0, 0.55, 0.2) * back * s * uTLGlow * 2.0 * (1.0 - 0.5 * tlA); }
+      #include <opaque_fragment>
+      ${TLMODE === "a2c" ? "gl_FragColor.a = tlA < 1.0 ? clamp(tlA + (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) * 0.3, 0.0, 1.0) : 1.0;" : ""}`);
+  };
+  m.customProgramCacheKey = () => "fin-" + TLMODE;
+  if (TLMODE === "hash") m.alphaHash = true; else m.alphaToCoverage = true;
+  m.alphaTest = 0;
+}
 if (PRE.rx != null) CORR.x = PRE.rx;                    // load defaults apply to tuning AND display
 // per-axis bend amplitudes bx/by/bz (all applied at once). Legacy ?ax=&amp= (old links) = that one axis only.
 const syncAx = () => { AX = "z"; let m = -1; for (const a of ["x", "y", "z"]) if (AMPS[a] > m) { m = AMPS[a]; AX = a; } AMP = AMPS[AX]; };   // AX/AMP = the dominant axis (calibration, fin ripple, wall flatten)
@@ -128,7 +159,9 @@ new GLTFLoader().load(MODEL, g => {
   root.traverse(n => {
     if (n.isBone) { if (!n.userData.anat) bones.push(n); if (!n.userData.q0) n.userData.q0 = n.quaternion.clone(); }
     if (n.isMesh && n.material) (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
-      m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide; m.needsUpdate = true;
+      m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide;
+      if (TL > 0 && n.geometry && n.geometry.attributes._fin && !(n.geometry.attributes._part && (Q.get("partvis") === "1" || Q.get("anatvis") === "1"))) patchFin(m);
+      m.needsUpdate = true;
     });
   });
   // tail-weight each bone by its REST position along the body (matches the school) so the wave whips the real tail, not array-order bones
@@ -160,7 +193,7 @@ new GLTFLoader().load(MODEL, g => {
   mixer = new THREE.AnimationMixer(root);
   if (g.animations && g.animations[0]) { action = mixer.clipAction(g.animations[0]); action.play(); }  // rig-less models have no clip
   loop();
-}, undefined, err => { console.warn("model load failed:", MODEL, err); });
+}, undefined, err => { console.warn("model load failed:", MODEL, err);  });
 
 let STEP = 90;
 for (const b of document.querySelectorAll("[data-rot]")) b.onclick = () => { const a = b.dataset.rot; CORR[a] = Math.round((CORR[a] + STEP * (+b.dataset.d)) * 100) / 100; };
@@ -549,7 +582,9 @@ function rigGoldfish(root) {
     if (c1 >= 0 && chains[c1].kind !== "tail" && rho > 1.25 && r1 > 0.04) s = 1;
     else if (c1 >= 0 && chains[c1].kind === "tail" && r1 > 1e-5) s += (1 - s) * ss(0.12, 0.4, B.z - p.z);   // tail veil well aft of the peduncle: no stray spine weight on the sheets   // fin web outside the body belongs to the nearest fin chains entirely (no stray spine weight between rays)
     if (s < 1) {
-      const w = 1 - s;
+      const hr = geo.attributes._part ? ss(0.40, 0.50, p.z) : 0;   // mouth models only: the head (z >= 0.50) is 100 % sp0, eased in over z 0.40-0.50 (mouth/gill rig: the jaw+opercula must not ride a flexing spine)
+      const w = (1 - s) * (1 - hr);
+      if (hr > 0) cand.push([sp[0], (1 - s) * hr]);
       if (p.z >= sz[0]) cand.push([sp[0], w]); else if (p.z <= sz[nSp - 1]) cand.push([sp[nSp - 1], w]);
       else for (let k = 0; k < nSp - 1; k++) if (p.z <= sz[k] && p.z >= sz[k + 1]) { const f = (sz[k] - p.z) / (sz[k] - sz[k + 1]); cand.push([sp[k], w * (1 - f)], [sp[k + 1], w * f]); break; }
     }
@@ -579,6 +614,7 @@ function rigGoldfish(root) {
   sm.bind(new THREE.Skeleton(bs));
   RIG = { sm, bs, chains, region, defs, rest: null };
   anatGoldfish(root, sm, bs);
+  if (Q.get("partvis") === "1" && geo.attributes._part) partVis(sm);
   if (Q.get("rigvis") === "1") {   // ?rigvis=1: colour each vertex by its dominant bone (hue per bone) — weight sanity check
     const col = new Float32Array(nV * 3), c = new THREE.Color();
     for (let i = 0; i < nV; i++) { let bi = idx[i * 4]; c.setHSL((bi * 0.618034) % 1, 0.85, 0.5); col.set([c.r, c.g, c.b], i * 3); }
@@ -595,6 +631,7 @@ function rigGoldfish(root) {
 //   pectoral rowing stroke: backward power stroke spread, forward recovery ~50% folded + feathered; alternate at hover, sync-forward braking, outer fin beats/inner holds in turns; outer rays trail
 //   dorsal/anal  per-ray chains driven by a travelling wave front→back (phase step/ray), followers softer by 0.5×/joint (damped springs), water-drag bend, speed-scaled flutter on the free edge; bend only (no roll), neighbour coupling, capped cumulative bend
 const AT = (k, d) => (Q.has(k) ? +Q.get(k) : (PRE[k] != null ? PRE[k] : d));
+let POSE = false;   // ?debug=1 __pose(true): fish frozen at rest at the origin (body wave, eyes, clip, anat curves off) for the mouth/gill tests
 const AN = { eyes: [], ops: [], jaw: null, pecs: [], rays: [], bones: [], own: [], ready: false, S: null };
 const AXV = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
 const ss01 = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -636,10 +673,13 @@ function reskin(meshes, newBones, opsFor) {
       p.fromBufferAttribute(pa, i).applyMatrix4(Mr); C.length = 0;
       for (let k = 0; k < 4; k++) { const w = sw.getComponent(i, k); if (w > 0) C.push([si.getComponent(i, k), w]); }
       for (const op of ops) {
-        if (op.from) {
+        if (op.set) { const r = op.set(i); if (r) { C.length = 0; for (const [b, w] of r) C.push([typeof b === "number" ? b : bi.get(b), w]); } }   // mouth models: per-vertex weights from _PART/_WGT replace the candidates
+        else if (op.from) {
           let so = 0; for (const c of C) if (op.from.has(c[0])) { so += c[1]; c[1] = 0; }
           if (so > 1e-3) { let tot = 0; const sh = op.to.map(t => { const v = Math.max(0, t.fn(i, p)); tot += v; return v; }); if (tot > 1e-9) for (let k = 0; k < sh.length; k++) if (sh[k] / tot > 0.002) C.push([bi.get(op.to[k].bone), so * sh[k] / tot]); }
-        } else { const a = op.fn(i, p); if (a > 0.002) { for (const c of C) c[1] *= 1 - a; C.push([bi.get(op.bone), a]); } }
+        } else if (op.keepBones) { const a = op.fn(i, p); if (a > 0.002) { const keep = op.keepSet || (op.keepSet = new Set(op.keepBones.map(b => bi.get(b))));   // C18: a pre-existing head op yields to the mouth/gill parts: part-bone weights are kept, the eye gets a*(1-w_part), sp0 scales by (1-a)
+            let wpart = 0; for (const c of C) if (keep.has(c[0])) wpart += c[1]; for (const c of C) if (!keep.has(c[0])) c[1] *= 1 - a; C.push([bi.get(op.bone), a * (1 - wpart)]); } }
+        else { const a = op.fn(i, p); if (a > 0.002) { for (const c of C) c[1] *= 1 - a; C.push([bi.get(op.bone), a]); } }
       }
       C.sort((x, y) => y[1] - x[1]); let s = 0; const m = Math.min(4, C.length); for (let k = 0; k < m; k++) s += C[k][1];
       if (s <= 0) { idx[i * 4] = 0; wts[i * 4] = 1; continue; }
@@ -659,11 +699,103 @@ function anatVis(meshes) {   // ?anatvis=1: colour = which anatomy bone owns the
 const gaussRay = (p, A, D, len, sigma) => { const v = _va.copy(p).sub(A), t = clamp(v.dot(D) / len, 0, 1), d2 = v.addScaledVector(D, -t * len).lengthSq(); return [Math.exp(-d2 / (sigma * sigma)) + 1e-7 / (1 + d2 * 400), t]; };
 const _va = new THREE.Vector3();
 // register the anat bones' q0 (rest) now, since they join the scene after the legacy q0 pass would otherwise miss them
-function finishAnat(bs) { for (const b of bs) { b.userData.q0 = b.quaternion.clone(); AN.bones.push(b); } }
+function finishAnat(bs) { for (const b of bs) { b.userData.q0 = b.quaternion.clone(); b.userData.p0 = b.position.clone(); AN.bones.push(b); } }
 // ray chain record: bones root→tip, dir/normal/bend axis in root frame
 function mkRay(group, k, bonesArr, base, tip, n) {
   const d = tip.clone().sub(base), len = d.length(); d.divideScalar(len); const a = new THREE.Vector3().crossVectors(d, n).normalize();
   return { group, k, bones: bonesArr, d, len, n: n.clone(), a, th: bonesArr.map(() => 0), om: bonesArr.map(() => 0), prev: bonesArr.map(() => null), ph: Math.random() * 6 };
+}
+// ?partvis=1 (models carrying the mouth data only): colour = the _PART/_WGT bone part of each vertex; interior surfaces override (mouth interior magenta, gill cavity + flap underside cyan)
+function partVis(sm) {
+  const g = sm.geometry, pt = g.attributes._part, wg = g.attributes._wgt, n = g.attributes.position.count, col = new Float32Array(n * 3);
+  const C = { 1: [0, 0, 1], 2: [1, 0, 0], 3: [0.5, 0, 1], 4: [0.5, 0, 1], 5: [1, 1, 0], 6: [1, 1, 0], 7: [1, 1, 0], 8: [1, 1, 0] };
+  for (let i = 0; i < n; i++) {
+    const p0 = pt.getX(i), p1 = pt.getY(i), cl = pt.getZ(i), w0 = wg.getX(i), w1 = wg.getY(i); let c = [0.5, 0.5, 0.5];
+    if (cl === 1) c = [1, 0, 1]; else if (cl === 2 || cl === 3) c = [0, 1, 1]; else if (p0 > 0 && w0 >= w1) c = C[p0]; else if (p1 > 0 && w1 > 0) c = C[p1]; else if (p0 > 0 && w0 > 0) c = C[p0];
+    col.set(c, i * 3);
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3)); sm.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+}
+// ================= MOUTH + GILLS (goldfish-mouth.glb): hinged lower jaw, protrusible premaxilla, maxillae, opercula, branchiostegals =================
+// geometry: the mouth slit + gill slits are real cuts (twinned vertices) with pockets; per-vertex _PART (uint8 x4: bone part 0, part 1, surface class, 0) + _WGT (float x2) give the bone weights (remainder = sp0).
+// bone parts: 1 premax, 2 jaw, 3 maxR, 4 maxL, 5 opR, 6 opL, 7 brR, 8 brL.  Landmarks (pivots) come from geometry.userData.mouthRig, written by work-goldfish/mouth/build_mouth.py: never retype them here.
+function mouthBones(sm, head, nb, ops, MR) {
+  const V3 = THREE.Vector3, at = a => new V3(...a), g = sm.geometry, pt = g.attributes._part, wg = g.attributes._wgt;
+  const jaw = mkBone("jaw", head, at(MR.J), "jaw", { skipWall: true, rigTw: 0.03 });
+  const premax = mkBone("premax", head, at(MR.P), "premax", { skipWall: true, rigTw: 0.03 });
+  const mx = {}, op = {}, br = {};
+  for (const [sg, k] of [[1, "R"], [-1, "L"]]) {
+    mx[k] = mkBone("max" + k, head, at(MR.M[k]), "max", { side: sg, skipWall: true, rigTw: 0.03 });
+    op[k] = mkBone("op" + k, head, at(MR.H0[k]), "op", { side: sg, skipWall: true, rigTw: 0.03 }); op[k].userData.ax[1] = new V3(0, -sg, 0);       // positive = trailing edge out
+    br[k] = mkBone("br" + k, head, at(MR.Br[k]), "br", { side: sg, skipWall: true, rigTw: 0.03 }); br[k].userData.ax[2] = new V3(0, 0, sg);          // positive = flap out/down
+    AN.ops.push({ bone: op[k], side: sg });
+  }
+  const all = [jaw, premax, mx.R, mx.L, op.R, op.L, br.R, br.L]; nb.push(...all);
+  head.updateWorldMatrix(true, false); const hq = new THREE.Quaternion(); head.getWorldQuaternion(hq);
+  const dloc = at(MR.d).applyQuaternion(hq.clone().invert());
+  const B = [null, premax, jaw, mx.R, mx.L, op.R, op.L, br.R, br.L];
+  ops.unshift({ set: i => {
+    const p0 = pt.getX(i), p1 = pt.getY(i), w0 = wg.getX(i), w1 = wg.getY(i); if (w0 + w1 <= 1e-6) return null;   // C5: no mouth weight -> default rig weighting
+    const r = []; if (p0 && w0 > 0) r.push([B[p0], w0]); if (p1 && w1 > 0) r.push([B[p1], w1]); const rest = 1 - w0 - w1; if (rest > 1e-6) r.push([0, rest]); return r; } });
+  AN.jaw = { bone: jaw };
+  AN.mouth = { rig: MR, jaw, premax, mx: [mx.R, mx.L], op: [op.R, op.L], br: [br.R, br.L], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "" };
+}
+const mpulse = x => { x = ((x % 1) + 1) % 1; return x < 0.35 ? ss01(0, 0.35, x) : (x < 0.85 ? 1 - ss01(0.35, 0.85, x) : 0); };   // breathing pulse over one cycle
+function mouthEvent(kind, u) {   // event profile at u = t/T in [0,1] -> { jaw (deg), premax (units), op (deg), br (deg) }
+  const sn2 = x => Math.pow(Math.sin(Math.PI * x), 2);
+  if (kind === "gulp" || kind === "yawn") {
+    const JP = kind === "yawn" ? 30 : 25, PP = kind === "yawn" ? 0.03 : 0.02;
+    const jaw = u < 0.35 ? JP * (1 - Math.pow(1 - u / 0.35, 2)) : u < 0.45 ? JP : u < 0.85 ? JP * (1 - ss01(0.45, 0.85, u)) : 0;
+    const pm = u < 0.25 ? 0 : u < 0.85 ? PP * ss01(0.25, 0.55, u) : PP * (1 - ss01(0.85, 1.0, u));
+    const gb = u < 0.45 ? 0.5 * u / 0.45 : 0.5 + 0.5 * (u - 0.45) / 0.55;
+    return { jaw, premax: pm, op: 10 * sn2(u), br: 8 * sn2(gb) };
+  }
+  if (kind === "prot") return { jaw: 0, premax: 0.012 * sn2(u), op: 0, br: 0 };
+  if (kind === "cough") { const t = u * 0.27; return { jaw: 0, premax: 0, op: 10 * (t < 0.12 ? ss01(0, 0.12, t) : 1 - ss01(0.12, 0.27, t)), br: 0 }; }
+  return { jaw: 0, premax: 0, op: 0, br: 0 };
+}
+const MEV = { gulp: { T: 0.6 }, yawn: { T: 1.2 }, prot: { T: 0.25 }, cough: { T: 0.27 } };
+function mouthApply(v) {
+  const M = AN.mouth; if (!M) return;
+  rotAx(M.jaw, 0, v.jaw * D2R);
+  M.premax.position.copy(M.premax.userData.p0).addScaledVector(M.dloc, v.premax);
+  const m = Math.min(20, 0.5 * v.jaw + 400 * v.premax) * D2R; for (const b of M.mx) rotAx(b, 0, m);
+  for (const b of M.op) rotAx(b, 1, v.op * D2R);
+  for (const b of M.br) rotAx(b, 2, v.br * D2R);
+  M.cur = { jaw: v.jaw, premax: v.premax, op: v.op, br: v.br };
+}
+function mouthPose() { const M = AN.mouth; mouthApply(M.force || { jaw: 0, premax: 0, op: 0, br: 0 }); }
+function mouthStep(S, dt, t) {
+  const M = AN.mouth; let v, name = "";
+  const th = ((S.bph / (2 * Math.PI)) % 1 + 1) % 1, wrapped = th < M.prevTh; M.prevTh = th;
+  const rnd = (a, b) => a + (b - a) * Math.random();
+  if (M.due === null) M.due = { gulp: t + rnd(8, 25), prot: t + rnd(4, 12), yawn: t + rnd(60, 180), cough: t + rnd(40, 80) };
+  if (M.force) { v = M.force; name = "force"; }
+  else {
+    if (M.eventsOn && !M.act) {   // start due events (a gulp/yawn waits for the next theta = 0)
+      for (const k of ["yawn", "gulp", "cough", "prot"]) if (t >= M.due[k] && (k === "cough" || k === "prot" || wrapped)) {
+        M.act = { kind: k, t0: t, n: k === "prot" ? 2 + Math.floor(Math.random() * 3) : 1 }; break; }
+    }
+    if (M.act) {
+      const A = M.act, T = MEV[A.kind].T, u = (t - A.t0) / T;
+      if (u >= 1) {
+        if (A.kind === "prot" && A.n > 1) { A.n--; A.t0 = t; v = mouthEvent("prot", 0); }
+        else {
+          const k = A.kind; M.act = null; const rate = Math.max(S.rate, 30) / 60;
+          if (k === "gulp" || k === "yawn") M.supp = t + 1 / rate;
+          if (M.due[k] != null) M.due[k] = t + (k === "gulp" ? (S.eff > 0.5 ? rnd(6, 15) : rnd(8, 25)) : k === "prot" ? rnd(4, 12) : k === "yawn" ? rnd(60, 180) : rnd(40, 80));
+          v = null;
+        }
+      } else v = mouthEvent(A.kind, u);
+      if (M.act) name = A.kind;
+    }
+    if (!v) {   // breathing (suppressed for one cycle after a gulp/yawn)
+      const k = t < M.supp ? 0 : 1;
+      const jamp = 5 + 1.0 * S.eff, oamp = Math.min(8, 6 * (1 + 0.35 * S.eff));
+      v = { jaw: k * mpulse(th) * jamp, premax: 0, op: k * mpulse(th - 0.40) * oamp, br: k * mpulse(th - 0.35) * 3 };
+    }
+  }
+  M.evn = name; S.jawAng = v.jaw * D2R; S.opAng = v.op * D2R; mouthApply(v);
 }
 // ---- goldfish: eye / operculum / jaw bones (the dorsal/anal/pectoral rays are built in rigGoldfish) ----
 const GFA = { eye: [0.10, -0.035, 0.83], eyeR: [0.075, 0.125], eyeX: 0.07,
@@ -671,17 +803,21 @@ const GFA = { eye: [0.10, -0.035, 0.83], eyeR: [0.075, 0.125], eyeX: 0.07,
   jawPivot: [0, -0.115, 0.76], jawY: -0.10, jawZ: 0.80 };
 function anatGoldfish(root, sm, bs) {
   const V3 = THREE.Vector3, head = bs[0], nb = [], ops = [], at = a => new V3(...a);
+  const MR = sm.geometry.userData.mouthRig, PT = !!(MR && sm.geometry.attributes._part && sm.geometry.attributes._wgt);   // PT: the model carries the mouth/gill cut + _PART/_WGT -> hinged-jaw rig (below); other goldfish files keep the gaussian jaw/operculum
   for (const sg of [1, -1]) {
     const c = at(GFA.eye).multiply(new V3(sg, 1, 1)), eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true, rigTw: 0.02 }); nb.push(eb);
     ops.push({ bone: eb, fn: (i, p) => { const d = p.distanceTo(c), g = ss01(GFA.eyeX * 0.6, GFA.eyeX * 1.3, sg * p.x); return ss01(GFA.eyeR[1], GFA.eyeR[0], d) * g; } });
+    if (PT) { AN.eyes.push({ bone: eb, side: sg }); continue; }
     const oc = at(GFA.op).multiply(new V3(sg, 1, 1)), hp = at(GFA.opHinge).multiply(new V3(sg, 1, 1)), ob = mkBone("op" + (sg > 0 ? "R" : "L"), head, hp, "op", { side: sg, skipWall: true, rigTw: 0.05 }); nb.push(ob);
     ops.push({ bone: ob, fn: (i, p) => { const r = Math.hypot((p.z - oc.z) / GFA.opR[0], (p.y - oc.y) / GFA.opR[1]); return ss01(1.0, 0.5, r) * ss01(0.06, 0.14, sg * p.x); } });
     AN.eyes.push({ bone: eb, side: sg }); AN.ops.push({ bone: ob, side: sg });
   }
+  if (PT) { mouthBones(sm, head, nb, ops, MR); const M_ = AN.mouth, kb = [M_.jaw, M_.premax, ...M_.mx, ...M_.op, ...M_.br]; for (const o of ops) if (o.bone && o.bone.userData.role === "eye") o.keepBones = kb; }
+  else {
   const jb = mkBone("jaw", head, at(GFA.jawPivot), "jaw", { skipWall: true, rigTw: 0.03 }); nb.push(jb);
   ops.push({ bone: jb, fn: (i, p) => ss01(GFA.jawY, GFA.jawY - 0.03, p.y) * ss01(GFA.jawZ - 0.04, GFA.jawZ + 0.06, p.z) * ss01(0.12, 0.05, Math.abs(p.x)) });
-  AN.jaw = { bone: jb };
-  const OFFG = (Q.get("anoff") || "").split(","); const opsF = ops.filter(o => !OFFG.includes(o.bone.userData.role));
+  AN.jaw = { bone: jb }; }
+  const OFFG = (Q.get("anoff") || "").split(","); const opsF = ops.filter(o => o.set ? !OFFG.includes("mouth") : !OFFG.includes(o.bone.userData.role));
   reskin([sm], nb, () => opsF); if (Q.get("anatvis") === "1") anatVis([sm]); finishAnat(nb); finishAnat(bs.filter(b => b.userData.anat));
   // rays + pectoral fans from the rig chains
   const byGroup = {};
@@ -792,6 +928,7 @@ const wrnd = (t, i) => Math.sin(t * 13.1 + 2.3 * i) * 0.5 + Math.sin(t * 7.7 + 4
 let INTENT = 0;
 function anatStep(dt, t) {
   if (!AN.ready || !(dt > 0)) return;
+  if (POSE) { for (const b of AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } for (const b of AN.own) b.quaternion.copy(b.userData.q0); if (AN.mouth) mouthPose(); return; }
   const S = AN.S, E = S.eye; t = S.ts = (S.ts || 0) + dt;   // own sim clock (frame-rate independent: dt is capped, so slow machines slow the fish, not the clock)
   for (const b of AN.bones) b.quaternion.copy(b.userData.q0);
   for (const b of AN.own) b.quaternion.copy(b.userData.q0);
@@ -816,8 +953,9 @@ function anatStep(dt, t) {
   const mouth = 0.5 - 0.5 * Math.cos(S.bph), opn = 0.5 - 0.5 * Math.cos(S.bph - AT("gilllag", 0.4) * 2 * Math.PI);
   const flare = AT("gill", GOLD ? 6 : 7) * D2R * (1 + 0.35 * S.eff);
   S.opAng = opn * flare; S.jawAng = mouth * AT("jaw", GOLD ? 8 : 7) * D2R;
-  for (const o of AN.ops) rotAx(o.bone, 1, -o.side * S.opAng);
-  if (AN.jaw) rotAx(AN.jaw.bone, 0, S.jawAng);
+  if (AN.mouth) mouthStep(S, dt, t);
+  else { for (const o of AN.ops) rotAx(o.bone, 1, -o.side * S.opAng);
+  if (AN.jaw) rotAx(AN.jaw.bone, 0, S.jawAng); }
   // ---------------- pectoral fins ----------------
   const f0 = AT("pecf", 1.2), f1 = AT("pecfmax", 2.6), fHz = f0 + (f1 - f0) * clamp(S.eff * 1.1, 0, 1); S.pph += dt * 2 * Math.PI * fHz; S.pecHz = fHz;
   const bri = ss01(0.35, 1.0, S.dec); S.brake = Math.max(bri, S.brake * Math.exp(-dt / 0.8));
@@ -877,7 +1015,7 @@ function anatStep(dt, t) {
       let span = 0, n = 0; for (let i = 0; i < tp.length; i++) for (let j = i + 1; j < tp.length; j++) { span += tp[i].distanceTo(tp[j]); n++; }
       S.veil = { vb: bp.x, vt: tp.reduce((q, v) => q + v.x, 0) / Math.max(1, tp.length), vs: span / Math.max(1, n) / (BODY_L * ZOOM), acc: VEIL.acc }; } }
   S.nanCheck = AN.bones.every(b => Number.isFinite(b.quaternion.x + b.quaternion.w));
-  if (window.__anatRec) { S.rec.push({ t, eye: S.eyeAng ? S.eyeAng.map(a => a / D2R) : [], eS: E.S / D2R, op: S.opAng / D2R, jaw: S.jawAng / D2R, rate: S.rate, hr, brake: S.brake, steer, intent: INTENT,
+  if (window.__anatRec) { S.rec.push({ t, eye: S.eyeAng ? S.eyeAng.map(a => a / D2R) : [], eS: E.S / D2R, op: S.opAng / D2R, jaw: S.jawAng / D2R, mth: AN.mouth ? [AN.mouth.cur.jaw, AN.mouth.cur.premax, AN.mouth.cur.op, AN.mouth.cur.br, AN.mouth.evn] : null, rate: S.rate, hr, brake: S.brake, steer, intent: INTENT,
     pec: AN.pecs.map(pc => [pc.side, pc.cmd.sweep / D2R, pc.cmd.sig]), ray: AN.rays.map(r => r.th.slice()), veil: S.veil || null }); if (S.rec.length > 3000) S.rec.shift(); }
 }
 if (Q.get("debug") === "1") {
@@ -935,6 +1073,70 @@ if (Q.get("debug") === "1") window.__dbg = () => {
 if (Q.get("debug") === "1") {
   // rig probes: __stretch() = max/p99.9 edge stretch vs rest (body / fins / tail), __ts() = tail lateral time series, __rig() = layout
   const TS = []; window.__ts = () => TS; window.__cam = cam; window.__ctl = controls;
+  // mouth/gill test hooks (models carrying geometry.userData.mouthRig): __pose(on) freezes the fish at rest; __view(name) sets the test camera (root frame, fov 30, distance 2.33*HL)
+  window.__pose = on => { POSE = !!on; return POSE; };
+  const poseApply = () => { for (const b of AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } if (AN.mouth) mouthPose(); RIG.sm.updateMatrixWorld(true); RIG.sm.skeleton.update(); };
+  window.__forceMouth = o => { const M = AN.mouth; if (!M) return null; M.force = o ? { jaw: o.jaw || 0, premax: o.premax || 0, op: o.op || 0, br: o.br || 0 } : null; poseApply(); return M.force; };
+  window.__mouthEvent = (k, u) => mouthEvent(k, u);
+  window.__events = on => { const M = AN.mouth; if (!M) return null; M.eventsOn = !!on; if (!on) M.act = null; return M.eventsOn; };
+  window.__event = name => { const M = AN.mouth; if (!M) return null; M.act = { kind: name, t0: AN.S.ts || 0, n: name === "prot" ? 3 : 1 }; return name; };
+  window.__seamGap = () => { const mr = RIG.sm.geometry.userData.mouthRig, sm = RIG.sm, a = new THREE.Vector3(), b = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); let m = 0, tp = mr.twinPairs;
+    for (let k = 0; k < tp.length; k += 2) { sm.getVertexPosition(tp[k], a); sm.getVertexPosition(tp[k + 1], b); m = Math.max(m, a.distanceTo(b)); } return m; };
+  window.__mouth = () => {
+    const M = AN.mouth, sm = RIG.sm, mr = sm.geometry.userData.mouthRig; if (!M) return null; sm.updateMatrixWorld(true); sm.skeleton.update();
+    const gp = i => sm.getVertexPosition(i, new THREE.Vector3()), lo = mr.lipLo, up = mr.lipUpR2R, D = mr.d;
+    const e2 = new THREE.Vector3(0, 1, 0).cross(new THREE.Vector3(1, 0, 0)).set(0, 0, 0); { const d = new THREE.Vector3(...D), x = new THREE.Vector3(1, 0, 0); e2.crossVectors(d, x).normalize(); }
+    const poly = up.concat(lo.slice().reverse().slice(1, -1)).map(i => { const p = gp(i); return [p.x, p.dot(e2)]; });
+    let area = 0; for (let k = 0; k < poly.length; k++) { const a = poly[k], b = poly[(k + 1) % poly.length]; area += a[0] * b[1] - b[0] * a[1]; } area = Math.abs(area) / 2;
+    const jawDeg = relAng(M.jaw, 0) / D2R, midGap = gp(mr.c0Up).distanceTo(gp(mr.c0Lo)), prem = M.premax.position.clone().sub(M.premax.userData.p0).dot(M.dloc);
+    return { jawDeg, premax: prem, opDeg: M.op.map(b => relAng(b, 1) / D2R), brDeg: M.br.map(b => relAng(b, 2) / D2R), maxDeg: M.mx.map(b => relAng(b, 0) / D2R), midGap, predGap: 2 * mr.L * Math.sin(jawDeg * D2R / 2), L: mr.L, W: mr.W, area, areaPred: 0.45 * mr.W * midGap };
+  };
+  // T7: per-edge |ratio-1| by class from _part/_wgt (edge class = its less-rigid endpoint), plus flipped class-0 triangles
+  window.__stretchMouth = () => {
+    const sm = RIG.sm, g = sm.geometry, mr = g.userData.mouthRig, pt = g.attributes._part, wg = g.attributes._wgt, pa = g.attributes.position, ix = g.index.array, nV = pa.count, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bn = sm.skeleton.bones;
+    sm.updateMatrixWorld(true); sm.skeleton.update();
+    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
+    const TH = { hyoid: 0.35, cheek: 0.55, rostral: 0.55, rictus: 0.55, band: 0.60 };
+    const cls = new Array(nV);
+    for (let i = 0; i < nV; i++) {
+      const p0 = pt.getX(i), w0 = wg.getX(i), w1 = wg.getY(i), sc = pt.getZ(i); let eyeW = 0; for (let k = 0; k < 4; k++) if (bn[si.getComponent(i, k)].userData.role === "eye") eyeW += sw.getComponent(i, k);
+      let c; if (sc !== 0) c = "int"; else if (w0 === 0 && w1 === 0) c = (pa.getZ(i) > 0.5 && eyeW === 0) ? "other" : "skip"; else if (w0 >= 1 - 1e-6) c = "rigid";
+      else if (p0 === 2) c = pa.getY(i) < mr.J[1] ? "hyoid" : "cheek"; else if (p0 === 1) c = "rostral"; else if (p0 === 3 || p0 === 4) c = "rictus"; else c = "band";
+      cls[i] = c; }
+    let PBL = null; const R = {}, add = (c, r) => { (R[c] || (R[c] = [])).push(r); }, seen = new Set();
+    for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) {
+      const a = ix[t + k], b = ix[t + (k + 1) % 3], key = Math.min(a, b) * nV + Math.max(a, b); if (seen.has(key)) continue; seen.add(key);
+      const ca = cls[a], cb = cls[b]; if (ca === "int" || cb === "int" || ca === "skip" || cb === "skip") continue;
+      const rl = Math.hypot(pa.getX(a) - pa.getX(b), pa.getY(a) - pa.getY(b), pa.getZ(a) - pa.getZ(b)); if (rl < 1e-5) continue;
+      const cl = Math.hypot(cur[a * 3] - cur[b * 3], cur[a * 3 + 1] - cur[b * 3 + 1], cur[a * 3 + 2] - cur[b * 3 + 2]);
+      let c; if (ca === "rigid" && cb === "rigid") c = "rigid"; else if (ca === "other" && cb === "other") c = "other";
+      else { const bl = [ca, cb].filter(x => TH[x] != null); c = bl.length === 0 ? "rigid-other" : bl.length === 1 ? bl[0] : (TH[bl[0]] >= TH[bl[1]] ? bl[0] : bl[1]); }
+      add(c, Math.abs(cl / rl - 1)); if (c === "rigid-other") (PBL = PBL || []).push([+pa.getX(a).toFixed(3), +pa.getY(a).toFixed(3), +pa.getZ(a).toFixed(3), +(cl / rl - 1).toFixed(3)]); }
+    const out = {}; for (const c in R) { const a = R[c].sort((x, y) => x - y); out[c] = { n: a.length, max: +a[a.length - 1].toFixed(4), p99: +a[Math.floor(a.length * 0.99)].toFixed(4) }; }
+    // flipped triangles on class-0 surface
+    let FL = null, flip = 0, n0 = 0; const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3(), N1 = new THREE.Vector3(), N2 = new THREE.Vector3();
+    for (let t = 0; t < ix.length; t += 3) { const a = ix[t], b = ix[t + 1], c = ix[t + 2]; if (pt.getZ(a) || pt.getZ(b) || pt.getZ(c)) continue; n0++;
+      A.fromBufferAttribute(pa, a); B_.fromBufferAttribute(pa, b).sub(A); C.fromBufferAttribute(pa, c).sub(A); N1.crossVectors(B_, C);
+      A.fromArray(cur, a * 3); B_.fromArray(cur, b * 3).sub(A); C.fromArray(cur, c * 3).sub(A); N2.crossVectors(B_, C); if (N1.dot(N2) <= 0 && N1.lengthSq() > 1e-14) { flip++; (FL = FL || []).push([a, b, c].map(q => [+pa.getX(q).toFixed(3), +pa.getY(q).toFixed(3), +pa.getZ(q).toFixed(3), pt.getX(q), +wg.getX(q).toFixed(2)])); } }
+    out.flipped = flip; out.tris0 = n0; out.pbLoc = PBL; out.flipLoc = FL; return out;
+  };
+  window.__view = name => {
+    const mr = RIG && RIG.sm.geometry.userData.mouthRig, root = window.__root; if (!mr || !root) return null;
+    const V3 = THREE.Vector3, v = a => new V3(...a), S = v(mr.S), d = v(mr.d), C0 = v(mr.C0), dist = 2.33 * mr.HL, X = new V3(1, 0, 0), D = Math.PI / 180;
+    let pos, tgt, up = new V3(0, 1, 0);
+    const frontPos = S.clone().addScaledVector(d, dist);
+    const m = /^(front|frontLow|latR|latL|rearObR|rearObL|top)$/.exec(name); if (!m) return null;
+    if (name === "front") { tgt = C0; pos = frontPos; }
+    else if (name === "frontLow") { tgt = C0; pos = tgt.clone().add(frontPos.clone().sub(tgt).applyAxisAngle(X, 25 * D)); }
+    else if (name === "latR" || name === "latL") { tgt = new V3(0, -0.05, 0.75); pos = tgt.clone().add(new V3(name === "latR" ? dist : -dist, 0, 0)); }
+    else if (name === "top") { tgt = new V3(0, -0.05, 0.75); pos = tgt.clone().add(new V3(0, dist, 0)); up = new V3(0, 0, 1); }
+    else { const sg = name === "rearObR" ? 1 : -1; tgt = v(mr.Grear[sg > 0 ? "R" : "L"]); const c10 = Math.cos(10 * D), s10 = Math.sin(10 * D), c35 = Math.cos(35 * D), s35 = Math.sin(35 * D);
+      pos = tgt.clone().add(new V3(sg * c35 * c10, s10, -s35 * c10).multiplyScalar(dist)); }
+    root.updateWorldMatrix(true, false);
+    const wp = root.localToWorld(pos.clone()), wt = root.localToWorld(tgt.clone());
+    cam.fov = 30; cam.near = 0.01; cam.updateProjectionMatrix(); cam.position.copy(wp); cam.up.copy(up.transformDirection(root.matrixWorld)); cam.lookAt(wt); controls.target.copy(wt); controls.update();
+    return { pos: wp.toArray(), tgt: wt.toArray() };
+  };
   window.__turn = (x, y, z) => { TGT.set(x, y, z); wallTgt = false; nextPick = performance.now() / 1000 + 4; };   // force a C-turn: new swim target
   let EDG = null; const _cur = [];
   window.__stretch = () => {
@@ -1015,7 +1217,7 @@ function loop() {
     ARROW.position.copy(outer.position); ARROW.setDirection(new THREE.Vector3(vx, 0, vz).normalize()); ARROW.visible = true;
   } else { outer.position.set(0, 0, 0); outer.quaternion.identity(); ARROW.visible = false; }
   for (const bn of bones) if (bn.userData.q0) bn.quaternion.copy(bn.userData.q0);  // rest FIRST each frame → symmetric wave, no accumulation (matches the school)
-  if (CLIP && mixer) mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * beat + 0.9 * Math.abs(steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
+  if (CLIP && mixer && !POSE) mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * beat + 0.9 * Math.abs(steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
   if (DISPLAY && PROC && bones.length > 2) {
     const amp0 = 0.08 + 0.92 * beat, bendC = clamp(steer * 1.2, -2.6, 2.6) * 0.10 * BENDK * BEND_SIGN;   // more flex: the body really curls into a turn
     for (const bn of bones) {
@@ -1036,7 +1238,7 @@ function loop() {
         if (a === "x") bn.rotateX(u[ka]); else if (a === "y") bn.rotateY(u[ka]); else bn.rotateZ(u[ka]);
       }
     }
-  } else if (PROC && bones.length > 2) {
+  } else if (PROC && bones.length > 2 && !POSE) {
     const ph = DISPLAY ? phase : t * 4.5, bank = DISPLAY ? clamp(turn * 4, -1, 1) * 0.05 : 0;   // bank: bend into the turn (as the school)
     for (let i = 0; i < bones.length; i++) { const tw = bones[i].userData.tw || 0, w = Math.sin(ph - tw * 5) * tw * tw; for (const ax of ["x", "y", "z"]) { const a = w * AMPS[ax] + (ax === AX ? bank * tw * tw : 0); if (ax === "x") bones[i].rotateX(a); else if (ax === "y") bones[i].rotateY(a); else bones[i].rotateZ(a); } }
   }

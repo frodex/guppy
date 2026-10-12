@@ -17,3 +17,4 @@ three.js r160 - MIT licence, (c) 2010-2023 three.js authors. Vendored in `site/v
 Source: https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383
 Licence: Creative Commons Attribution 4.0 (CC BY 4.0) - https://creativecommons.org/licenses/by/4.0/
 File: `site/goldfish.glb` (simplified, textures converted to WebP; rigged and animated at runtime by the page).
+File: `site/goldfish-mouth.glb` (the model used by /goldfish since 2026-10-12): the same model modified here: tail and fins rebuilt as thin membranes, holes at the fin roots closed, a translucency attribute on the fins, and a mouth and gill openings cut into the head with interior surfaces; textures re-encoded as WebP.

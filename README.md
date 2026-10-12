@@ -7,7 +7,7 @@ Controls: click or `F` for fullscreen, scroll to zoom, `S` for the settings view
 ## Pages
 
 - `/` - the betta (`site/index.html`, model `site/guppies.glb`).
-- `/goldfish` - a rigged fancy goldfish (`site/goldfish/index.html`, model `site/goldfish.glb`). Same controls; settings view has the credits and a link back to `/`.
+- `/goldfish` - a rigged fancy goldfish (`site/goldfish/index.html`, model `site/goldfish-mouth.glb`: thin translucent fins, hinged mouth and opening gills; the older `site/goldfish.glb` is kept so cached links keep working). Same controls; settings view has the credits and a link back to `/`.
 
 ## Local preview
 
