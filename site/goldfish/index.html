@@ -168,7 +168,7 @@ function newFish(i) {
     gait: "coast", gaitEnd: 0, coastStart: 0, beat: 0.3, omega: 5, steer: 0, BEND_SIGN: 1,
     yawRate: 0, atWall: false, wallTgt: false, wallSince: 0, pressLat: 0, pressY: 0, impact: 0, ram: 0,   // ram: into-wall speed measured BEFORE the wall stops it; impact: extra bend from ramming the glass; pressLat/pressY: wall pressure (signed, body frame / vertical)
     INTENT: 0, wallHits: 0, tailHits: 0, HEADS: null, PUSH: { v: 0, tgt: 0 }, VEIL: { acc: 0, sp: 0, spr: 0 },
-    FINS: [], CH: {}, NB: {}, BODY_L: 1, SPINE_SET: null, RIG: null,
+    FINS: [], CH: {}, NB: {}, BODY_L: 1, sepSlow: 0, sepAct: false, SPINE_SET: null, RIG: null,
     AN: { eyes: [], ops: [], jaw: null, pecs: [], rays: [], bones: [], own: [], ready: false, S: null },
     // species (set by initSpecies)
     BASE: "", MKEY: "", MODEL: "", PRE: {}, GOLD: false, BENDK: 1, RATE: 1, GLIDE: 1, SPEEDK: 1, FK: 1, FZ: 0.24, RIP: 0, CUM_BEND: 0.5,
@@ -473,16 +473,44 @@ function pickTarget(t) {
   F.tSpeed = (0.55 + Math.random() * 1.0) * F.SPEEDK;                   // dawdle ↔ cruise
   F.nextPick = t + 5 + Math.random() * 7;
 }
-// soft mutual avoidance: every other fish closer than R (3D, scales with the fish size) adds a repulsion to the DESIRED heading only (weight up to 0.9 of a unit aim, falling linearly to 0 at R)
-// -> the fish veer off through their normal steering (bend, yaw inertia); nothing is pushed or snapped. No effect with one fish.
-const _sd = new THREE.Vector3();
-function separate() {
-  const R = 1.9 * ZOOM;
+// soft mutual avoidance (2026-10-12 spacing fix): body-length based, full 3D. Desired gap between two fish centres = 0.6 x (half-length A + half-length B) + a margin (7.5% of the summed lengths);
+// inside 2 x gap every other fish adds a repulsion to the DESIRED heading (ramps up smoothly towards the gap, ~1.6 unit-aims at it, more inside) and, when it is ahead, asks for a slower swim (thrust scaled via F.sepSlow, eased).
+// A near head-on meeting also gets a sideways component (turn away from the side the other fish is on). Only intent + speed change: positions are never moved, so the steering inertia keeps the motion smooth. No effect with one fish.
+const _sd = new THREE.Vector3(), _sl = new THREE.Vector3(), SEP_K = 0.6, SEP_MARGIN = 0.075, SEP_RANGE = 2.0, SEP_SCR = 4, SEP_SCRGAP = 1.35, SEP_LOOK = 0;
+function separate(dt) {
+  const LF = F.BODY_L * ZOOM; let slowT = 0, usMax = 0; F.sepAct = false;
+  _sl.crossVectors(UPV, F.V).normalize();
   for (const o of FISH) {
     if (o === F) continue;
+    const Lo = o.BODY_L * ZG * o.SZ, gap = (SEP_K * 0.5 + SEP_MARGIN * 0.5) * (LF + Lo), R = SEP_RANGE * gap;
     _sd.copy(F.P).sub(o.P); const d = _sd.length(); if (d >= R || d < 1e-4) continue;
-    DES.addScaledVector(_sd, (1 - d / R) * 0.9 / d);
+    const u = (R - d) / (R - gap), uc = u > 1 ? 1 : u, w = 2.5 * Math.pow(uc, 1.3) + (u > 1 ? 2.5 * (u - 1) : 0);   // 0 at R, 1.6 at the gap, steeper inside it
+    _sd.multiplyScalar(1 / d);                                           // unit vector away from the other fish (3D)
+    DES.addScaledVector(_sd, w);
+    const ahead = -_sd.dot(F.V);                                         // >0: the other fish is in front of me
+    // screen-space term: fish at different depths can still overlap on the picture. Project both onto the z=0 plane (perspective from the camera), and if their projected centres are
+    // closer than the projected gap, push apart in x/y only (depth stays free, so a fish can still pass in front of / behind another once the picture is clear)
+    const fF = CAM0 / (CAM0 - F.P.z), fO = CAM0 / (CAM0 - o.P.z), gs = SEP_SCRGAP * (SEP_K * 0.5 + SEP_MARGIN * 0.5) * (LF * fF + Lo * fO), Rs = SEP_RANGE * gs;
+    let sx = F.P.x * fF - o.P.x * fO, sy = F.P.y * fF - o.P.y * fO, ds = Math.hypot(sx, sy);
+    { const px = (F.P.x + F.VEL.x * SEP_LOOK) * fF - (o.P.x + o.VEL.x * SEP_LOOK) * fO, py = (F.P.y + F.VEL.y * SEP_LOOK) * fF - (o.P.y + o.VEL.y * SEP_LOOK) * fO, dp = Math.hypot(px, py);   // where we will be in SEP_LOOK s: react to a crossing early
+      if (dp < ds) { if (dp > 1e-4) { sx = px; sy = py; ds = dp; } else { ds = 1e-4; } } }
+    if (ds < Rs && ds > 1e-4) { const us = Math.min(1, (Rs - ds) / (Rs - gs)), kx = SEP_SCR * Math.pow(us, 1.3); const ww = walls(F.P.z, _W2);
+      const fx = sx > 0 === F.P.x > 0 ? clamp((ww.x - Math.abs(F.P.x) - 0.6 * LF) / (0.8 * LF), 0, 1) : 1, fy = sy > 0 === F.P.y > 0 ? clamp((ww.y - Math.abs(F.P.y) - 0.6 * LF) / (0.8 * LF), 0, 1) : 1;   // never push a fish INTO the glass it is already near
+      DES.x += sx / ds * kx * fx; DES.y += sy / ds * kx * fy; F.sepAct = true;
+      if (us > usMax) usMax = us;
+      const hl = Math.hypot(F.V.x, F.V.y);                              // my heading on the picture: if the other fish is in front of me there, brake and dodge sideways
+      if (hl < 0.5) slowT = Math.max(slowT, 0.7 * us * (1 - 2 * hl));   // heading mostly along the view axis (towards / away from the camera): about to cover the other fish on the picture -> ease off
+      if (hl > 0.2) { const hx = F.V.x / hl, hy = F.V.y / hl, aS = -(sx * hx + sy * hy) / ds;
+        if (aS > 0) { slowT = Math.max(slowT, 0.7 * us * Math.min(1, aS * 1.5));
+          if (aS > 0.3) { const sd = -(sx * -hy + sy * hx) / ds, sg2 = Math.abs(sd) > 0.05 ? -Math.sign(sd) : (F.i % 2 ? 1 : -1), kk = SEP_SCR * Math.pow(us, 1.3) * (aS - 0.3) * 1.2; DES.x += -hy * sg2 * kk; DES.y += hx * sg2 * kk; } } } }
+    if (ahead > 0) {
+      slowT = Math.max(slowT, 0.45 * uc * Math.min(1, ahead * 1.5));
+      if (ahead > 0.6) { const side = -_sd.dot(_sl), sg = Math.abs(side) > 0.05 ? -Math.sign(side) : (F.i % 2 ? 1 : -1); DES.addScaledVector(_sl, sg * w * (ahead - 0.6) * 1.2); }   // head-on: dodge to the side
+    }
   }
+  if (usMax > 0) DES.z *= 1 - 0.8 * usMax;                                // covering another fish on the picture: don't keep diving along the view axis, turn aside instead
+  if (F.atWall || Math.abs(F.PUSH.v) > 1e-4) slowT = 0;                  // never braked while pressed on the glass (the tail push-off would then dominate the speed)
+  F.sepSlow += (slowT - F.sepSlow) * (1 - Math.exp(-dt / ((F.atWall || Math.abs(F.PUSH.v) > 1e-4) ? 0.06 : 0.3)));
 }
 function wander(dt, t) {
   F.outer.scale.setScalar(ZOOM);   // (the zoom easing + ghost run once per frame in loop(): stepZoom)
@@ -503,9 +531,9 @@ function wander(dt, t) {
       DES[a] -= sg * clamp(over / LA, 0, 1) * 0.35;
     }
   }
-  if (FISH.length > 1) separate();                      // several fish: steer softly away from the others
+  if (FISH.length > 1) separate(dt);                      // several fish: steer softly away from the others
   DES.normalize();
-  const yLim = F.wallTgt && Math.abs(F.TGT.y) > Math.abs(F.TGT.x) * 0.5 ? 0.5 : 0.3;   // allow a steeper climb/dive when heading for the top/bottom wall
+  const yLim = (F.wallTgt && Math.abs(F.TGT.y) > Math.abs(F.TGT.x) * 0.5) || F.sepAct ? 0.5 : 0.3;   // allow a steeper climb/dive when heading for the top/bottom wall
   DES.y = clamp(DES.y, -yLim, yLim); DES.z = clamp(DES.z, -0.5, 0.5); DES.normalize();
   DES.y -= F.pressY * 0.6; DES.normalize();                // pressed on the top/bottom glass: tip away from it   // aim mostly level + side-on
 
@@ -542,7 +570,7 @@ function wander(dt, t) {
   // forward = thrust (beating) vs drag; sideways slip decays (fins/body resist it) → the fish carries
   // its old line a little through a turn instead of pivoting on a rail
   const vf = F.VEL.dot(F.V);
-  const ts = F.tSpeed * Math.sqrt(ZOOM);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
+  const ts = F.tSpeed * Math.sqrt(ZOOM) * (1 - F.sepSlow);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
   let nf = vf + (DRAG * ts * ts * F.beat - DRAG * vf * Math.abs(vf)) * dt * 1.6 / Math.sqrt(M);   // heavier → slower to speed up and to slow down (longer glides)
   nf = Math.max(nf, 0.12);
   LATV.copy(F.VEL).addScaledVector(F.V, -vf).multiplyScalar(Math.exp(-dt * 7));
