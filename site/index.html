@@ -105,7 +105,7 @@
       <p>Toggle the model animation and procedural wave.</p></section>
     </details>
     <div id="about"><h3>About / Credits</h3>
-      <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
+      <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (gill covers and chamber added here)</div>
       <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, tail root reshaped, mouth and gills added here; v2 includes mesh fixes (lip flips, mouth corners, gill sliver); a lower-polygon copy, goldfish-natural-v2-lo, is simplified further from goldfish-natural-v2)</div>
       <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
       <div>Display mode: click or F for fullscreen, scroll to zoom, click a fish to resize just that one, S for settings.</div>
@@ -475,7 +475,7 @@ function disposeFish(f) {
   if (f.mixer) f.mixer.uncacheRoot(f.root);
 }
 // display-mode corner credit: one line per model on screen, fully visible for 4 s after load / a fish change, then fades over 1 s (CSS) and stays hidden
-const CREDIT_BETTA = '“Guppies” by dannzjs on Sketchfab, CC BY 4.0';
+const CREDIT_BETTA = '“Guppies” by dannzjs on Sketchfab, CC BY 4.0 (gill covers and chamber added here)';
 const CREDIT_GOLD = '“Crimson Cascade red goldfish” by rt699448 on Sketchfab, CC BY 4.0 (simplified, rigged, fins rebuilt, mouth + gills cut here; v2 includes mesh fixes: lip flips, mouth corners, gill sliver)';
 let creditT = 0;
 function creditShow() {
