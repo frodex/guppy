@@ -7,9 +7,31 @@
 <link rel="icon" href="data:,">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0a3a5a; font: 13px system-ui, sans-serif; color: #d6f3ff; }
-  #c { position: fixed; inset: 0; }
-  #ui { position: fixed; top: 10px; left: 10px; z-index: 2; display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
-    background: rgba(6,28,40,.65); padding: 8px 10px; border-radius: 10px; max-width: 96vw; }
+  #c { position: fixed; inset: 0; touch-action: none; }   /* canvas only: a pinch on the tank must not zoom the page (select + per-fish size: pointer events below) */
+  #ui { position: fixed; top: 12px; left: 12px; bottom: 42px; width: 360px; max-width: calc(100vw - 24px);
+    z-index: 2; display: flex; flex-direction: column; background: #061c28; border: 1px solid #416071; border-radius: 12px; overflow: hidden; }
+  #ui .settings-scroll { overflow-y: auto; padding: 18px; min-height: 0; }
+  #ui h1 { margin: 0 0 4px; font-size: 22px; color: #fff; }
+  #ui h2 { margin: 0 0 8px; font-size: 15px; color: #9fe9ff; }
+  #ui p { margin: 6px 0 10px; line-height: 1.45; color: #c2d7e2; }
+  #ui section, #ui details { border-top: 1px solid #416071; margin-top: 14px; padding-top: 12px; }
+  #ui .controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+  #ui .axis { display: inline-flex; align-items: center; gap: 6px; }
+  #ui button { min-height: 44px; min-width: 44px; background: #174b60; color: #fff; }
+  #ui button.on { background: #174b60; color: #fff; box-shadow: inset 0 0 0 2px #9fe9ff; font-weight: 700; }
+  #ui button.on::before { content: '✓ '; }
+  #ui button:focus-visible, #ui summary:focus-visible { outline: 3px solid #ffd23a; outline-offset: 2px; }
+  #ui summary { cursor: pointer; min-height: 44px; align-content: center; font-weight: 700; }
+  #ui .start-bar { flex-shrink: 0; margin-top: auto; padding: 12px 18px; border-top: 1px solid #416071; background: #061c28; }
+  #ui #disp { width: 100%; min-height: 56px; background: #9fe9ff; color: #062331; font-size: 18px; font-weight: 750; }
+  #ui .start-bar p { margin: 6px 0 0; text-align: center; font-size: 12px; }
+  #ui #info { position: static; margin-top: 12px; opacity: 1; color: #c2d7e2; overflow-wrap: anywhere; }
+  #ui #nv { min-width: 2ch; text-align: center; font-variant-numeric: tabular-nums; }
+  @media (max-width: 600px) {
+    #ui { top: 8px; left: 8px; bottom: 8px; width: calc(100vw - 18px); max-width: none; }
+    #ui .settings-scroll { padding: 14px; }
+    #ui .start-bar { padding: 10px 14px; }
+  }
   button { padding: 6px 10px; border: 0; border-radius: 6px; background: #1b8a6b; color: #fff; cursor: pointer; font: inherit; }
   button.on { background: #ffd23a; color: #222; font-weight: 700; }
   b { color: #9fe9ff; }
@@ -26,6 +48,9 @@
   #credit { display: none; position: fixed; right: 12px; bottom: 8px; z-index: 3; font-size: 11px; opacity: .6; text-align: right; max-width: 60vw; }
   #credit a { color: inherit; }
   body.display #credit { display: block; color: #ffffff88; opacity: 1; transition: opacity 1s linear; pointer-events: none; }   /* corner credit: every model on screen, fades out 4 s after load / a fish change; full credits are in the settings view (#about) */
+  /* selected-fish size label (display mode): placed next to the fish by script, never takes pointer events */
+  #sel { display: none; position: fixed; left: 0; top: 0; z-index: 3; pointer-events: none; white-space: nowrap; font: 12px system-ui, sans-serif; font-variant-numeric: tabular-nums;
+    color: #e6f9ff; background: #03202ccc; border: 1px solid #5fd4ff77; padding: 2px 9px; border-radius: 10px; will-change: transform; }
   #about { flex-basis: 100%; margin-top: 6px; padding-top: 8px; border-top: 1px solid #ffffff22; font-size: 12px; line-height: 1.6; }
   #about h3 { margin: 0 0 4px; font-size: 12px; color: #9fe9ff; }
   #about a { color: #bfeaff; text-decoration: underline; }
@@ -40,35 +65,62 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="ui">
-  <button id="swim">swim test: OFF</button>
-  &nbsp;<b>nose</b>
-  X<button data-rot="x" data-d="-1">−</button><button data-rot="x" data-d="1">+</button>
-  Y<button data-rot="y" data-d="-1">−</button><button data-rot="y" data-d="1">+</button>
-  Z<button data-rot="z" data-d="-1">−</button><button data-rot="z" data-d="1">+</button>
-  <button id="step">step 90°</button><button id="rreset">reset</button>
-  &nbsp;<b>bend</b>
-  X<button data-bd="x" data-d="-1">−</button><span id="ampv-x">0</span><button data-bd="x" data-d="1">+</button>
-  Y<button data-bd="y" data-d="-1">−</button><span id="ampv-y">0</span><button data-bd="y" data-d="1">+</button>
-  Z<button data-bd="z" data-d="-1">−</button><span id="ampv-z">0.02</span><button data-bd="z" data-d="1">+</button>
-  &nbsp;<button id="clip" class="on">clip</button><button id="proc" class="on">wave</button>
-  &nbsp;<button id="disp" title="open display mode with these settings">▶ display</button>
-  <br>
-  <b>quality</b> <button data-q="auto">auto</button><button data-q="high">high</button><button data-q="low">low</button> <span id="qnote"></span>
-  &nbsp;<button id="tlb" title="translucent fins and tail (models with a fin mask)">see-through fins: off</button>
-  &nbsp;<b>fish</b> <button data-fish="betta">betta</button><button data-fish="goldfish">goldfish</button><button data-fish="mix">mix</button>
-  &nbsp;count <button id="nminus">−</button><span id="nv">1</span><button id="nplus">+</button> <span style="opacity:.65">(this view shows one fish; the count applies in ▶ display)</span>
-  <div id="about"><h3>About / Credits</h3>
-    <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
-    <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, tail root reshaped, mouth and gills added here; a lower-polygon copy, goldfish-natural-lo, is simplified further from goldfish-natural)</div>
-    <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
-    <div>Display mode: click or F for fullscreen, scroll to zoom, S for settings.</div>
-    <div>Version: <span id="ver"></span></div>
-    <div><a href="/">Betta</a> &middot; <a href="/goldfish">Goldfish</a></div>
+<div id="ui" role="region" aria-label="Tank settings" tabindex="-1">
+  <div class="settings-scroll">
+    <h1>Your tank</h1>
+    <p>Choose your fish, then start swimming.</p>
+    <section aria-labelledby="fish-heading">
+      <h2 id="fish-heading">Fish</h2>
+      <div class="controls" role="group" aria-label="Species"><button data-fish="betta">betta</button><button data-fish="goldfish">goldfish</button><button data-fish="mix">mix</button></div>
+      <div class="controls">Count <button aria-label="Fewer fish" id="nminus">−</button><span id="nv" aria-live="polite">1</span><button aria-label="More fish" id="nplus">+</button></div>
+      <p>The preview shows one fish. Your count applies in the tank.</p>
+    </section>
+    <section aria-labelledby="look-heading">
+      <h2 id="look-heading">Look</h2>
+      <div class="controls" role="group" aria-label="Quality">Quality <button data-q="auto">auto</button><button data-q="high">high</button><button data-q="low">low</button> <span id="qnote"></span></div>
+      <p>Auto balances detail and performance.</p>
+      <button id="tlb" title="translucent fins and tail (models with a fin mask)">see-through fins: off</button>
+    </section>
+    <section aria-labelledby="sizes-heading">
+      <h2 id="sizes-heading">Sizes</h2>
+      <button id="rsz" title="put every fish back to its own default size (in the tank: click a fish to select it, then scroll / + − / pinch resizes just that fish; Esc or a click on empty water deselects; key 0 does the same as this button)">reset sizes</button>
+      <p>In the tank, select a fish and scroll or pinch to resize. Sizes last for that visit.</p>
+    </section>
+    <details id="advanced">
+      <summary>Advanced · motion tuning</summary>
+      <p>Optional tools for testing the preview fish.</p>
+      <button id="swim">swim test: OFF</button>
+      <section aria-labelledby="nose-heading"><h2 id="nose-heading">Nose direction</h2>
+      <p>Rotate the preview around each axis.</p>
+      <div class="controls"><span class="axis">X <button aria-label="Decrease nose rotation X" data-rot="x" data-d="-1">−</button><button aria-label="Increase nose rotation X" data-rot="x" data-d="1">+</button></span></div>
+<div class="controls"><span class="axis">Y <button aria-label="Decrease nose rotation Y" data-rot="y" data-d="-1">−</button><button aria-label="Increase nose rotation Y" data-rot="y" data-d="1">+</button></span></div>
+<div class="controls"><span class="axis">Z <button aria-label="Decrease nose rotation Z" data-rot="z" data-d="-1">−</button><button aria-label="Increase nose rotation Z" data-rot="z" data-d="1">+</button></span></div>
+      <div class="controls"><button id="step">step 90°</button><button id="rreset">Reset direction</button></div></section>
+      <section aria-labelledby="bend-heading"><h2 id="bend-heading">Body bend</h2>
+      <p>Adjust the amount of bend on each axis.</p>
+      <div class="controls"><span class="axis">X <button aria-label="Decrease bend X" data-bd="x" data-d="-1">−</button><span id="ampv-x">0</span><button aria-label="Increase bend X" data-bd="x" data-d="1">+</button></span></div>
+<div class="controls"><span class="axis">Y <button aria-label="Decrease bend Y" data-bd="y" data-d="-1">−</button><span id="ampv-y">0</span><button aria-label="Increase bend Y" data-bd="y" data-d="1">+</button></span></div>
+<div class="controls"><span class="axis">Z <button aria-label="Decrease bend Z" data-bd="z" data-d="-1">−</button><span id="ampv-z">0</span><button aria-label="Increase bend Z" data-bd="z" data-d="1">+</button></span></div>
+      <div class="controls"><button id="clip" class="on">Animation clip</button><button id="proc" class="on">Body wave</button></div>
+      <p>Toggle the model animation and procedural wave.</p></section>
+    </details>
+    <div id="about"><h3>About / Credits</h3>
+      <div>"<a href="https://sketchfab.com/3d-models/guppies-b5cfc87c93fa464b842773c14af1b27e" target="_blank" rel="noopener noreferrer">Guppies</a>" by <a href="https://sketchfab.com/dannzjs" target="_blank" rel="noopener noreferrer">dannzjs</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></div>
+      <div>"<a href="https://sketchfab.com/3d-models/crimson-cascade-red-goldfish-dd126e6dbc234d60bcee154c68d3e383" target="_blank" rel="noopener noreferrer">Crimson Cascade red goldfish</a>" by <a href="https://sketchfab.com/rt699448" target="_blank" rel="noopener noreferrer">rt699448</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a> (simplified, rigged, fins rebuilt, tail root reshaped, mouth and gills added here; v2 includes mesh fixes (lip flips, mouth corners, gill sliver); a lower-polygon copy, goldfish-natural-v2-lo, is simplified further from goldfish-natural-v2)</div>
+      <div>three.js r160, MIT licence, &copy; 2010-2023 three.js authors (<a href="/vendor/three/LICENSE" target="_blank" rel="noopener noreferrer">licence</a>). Full list: <a href="https://github.com/frodex/guppy/blob/main/CREDITS.md" target="_blank" rel="noopener noreferrer">CREDITS.md</a></div>
+      <div>Display mode: click or F for fullscreen, scroll to zoom, click a fish to resize just that one, S for settings.</div>
+      <div>Version: <span id="ver"></span></div>
+      <div><a href="/">Betta</a> &middot; <a href="/goldfish">Goldfish</a></div>
+    </div>
+  </div>
+  <div class="start-bar">
+    <button id="disp" title="Start the tank with these settings" aria-keyshortcuts="Enter">▶ Start swimming</button>
+    <p>Enter to start · S to return to settings</p>
   </div>
 </div>
 <button id="back" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg></button>
 <div id="credit"></div>
+<div id="sel"></div>
 <div id="info">drag to orbit · tune the bend, then press ▶ display</div>
 <script type="module">
 import * as THREE from "three";
@@ -86,22 +138,28 @@ const DISPLAY = Q.get("display") === "1";                // display mode: black,
 // goldfish.glb (2026-10-11): nose +Z, up +Y in the file (verified) → rot 0; no skeleton in the file, so `rig` builds one at load (rigGoldfish).
 //   ax y = lateral bend about the up axis; rate/glide/speed = slower stroke, longer glides, slower cruise; fk/fz = fin+tail spring stiffness / damping ratio (softer + longer-lagging than the betta);
 //   bend = C-bend scale (stiffer body); fg/fmax = drag torque gain / max bend per joint (rad); rip = active tail ripple scale. URL overrides: ?amp= ?fk= ?fz= ?rip= ?rate= ?glide=
-const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, matte: true, anat: "betta", dph: 60, cc: 0, ccr: 0.3, rough: 0.6, metal: 0.04 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
+const PRESETS = { "/guppies.glb": { rx: 20, amp: 0.1, gait: "betta", matte: true, anat: "betta", dph: 60, cc: 0, ccr: 0.3, rough: 0.6, metal: 0.04 }, "/guppy2.glb": { rx: -335, amp: 0.02 },
   "/goldfish.glb": { rx: 0, bx: 0.1, by: 0.4, bz: 0.0125, rig: "goldfish", rate: 0.55, glide: 2.0, speed: 0.7, fk: 0.3, fz: 0.3, rip: 1.4, fg: 0.38, fmax: 0.42, bend: 0.45, cum: 0.85, vk: 0.5, vdk: 0.5, vfl: 0.05, vspr: 1.1 } };
 // only the server's known models may be requested; anything else (or a failed load) falls back to the default fish with ITS OWN preset
-const KNOWN = /^\/?(guppies|goldfish-natural|goldfish-natural-lo)\.glb$/;   // the models this site serves (betta; goldfish; low-poly goldfish)
+const KNOWN = /^\/?(guppies|betta-gills3d-simple|goldfish-natural-v2|goldfish-natural-v2-lo)\.glb$/;   // the models this site serves (betta guppies.glb [pre-gills rollback]; betta-gills3d-simple; goldfish v2; low-poly goldfish v2). Older goldfish files stay in site/ for cached old pages but are not listed
 function fallbackToDefault(bad) {            // reload without m + the per-model overrides, so guppies.glb gets its own preset; ?nf= carries the message
   const u = new URLSearchParams(location.search);
   for (const k of ["m", "rx", "ry", "rz", "amp", "ax", "bx", "by", "bz"]) u.delete(k);
   u.set("nf", bad); location.replace(location.pathname + "?" + u);
 }
 const NF = Q.get("nf");
-if (Q.has("m") && !KNOWN.test(Q.get("m"))) { fallbackToDefault(Q.get("m")); throw new Error("unknown model " + Q.get("m")); }
-const MKEY0 = Q.get("m") ? "/" + Q.get("m").replace(/^\//, "") : "/goldfish-natural.glb";   // default fish of this page (/ = betta, /goldfish = goldfish); new names because /*.glb is cached immutable
+const MQ0 = Q.has("m") ? (/\.glb$/.test(Q.get("m")) ? Q.get("m") : Q.get("m") + ".glb") : null;   // ?m=goldfish is the same as ?m=goldfish.glb
+const MQ = MQ0 && (/^\/?goldfish\.glb$/.test(MQ0) ? "goldfish-natural-v2.glb" : MQ0);   // site: the plain name is the alias of the v2 file (KNOWN lists only the shipped files)
+if (Q.has("m") && !KNOWN.test(MQ)) { fallbackToDefault(Q.get("m")); throw new Error("unknown model " + Q.get("m")); }
+const MKEY0 = MQ ? "/" + MQ.replace(/^\//, "") : "/goldfish-natural-v2.glb";   // default fish of this page (/ = betta-gills3d-simple.glb, /goldfish = goldfish v2); new names because /*.glb is cached immutable; ?m=goldfish (the plain name) = goldfish-natural-v2.glb
 PRESETS["/goldfish-thin3.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin3.glb (2026-10-12): tail + fins retopologised as clean single-layer membrane meshes (work-goldfish/thin3/)
 PRESETS["/goldfish-thin5.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin5.glb (2026-10-12): thin4 geometry + per-vertex _FIN (0 at the fin/tail root -> 1 at the free margin) driving the translucent-fin shader (work-goldfish/thin5/)
+PRESETS["/betta-mouth2.glb"] = PRESETS["/guppies.glb"];   // betta-mouth2.glb (2026-10-12): guppies.glb + hidden gill-crease split + per-vertex _PART/_WGT/_DEPTH and mouthRig v2 (species betta, version 2): lower-jaw hinge about the sculpted gape, upper-lip band, abducting opercula; reachable with ?m=betta-mouth2.glb only (work-goldfish/betta-mouth-v2/build/)
+PRESETS["/betta-mouth.glb"] = PRESETS["/guppies.glb"];   // betta-mouth.glb (2026-10-12): Image-bot mouth+gills; same object = same betta preset (rx 20, amp .1, gait betta, matte, anat betta, cc 0 / rough .6 / metal .04) and the flow/chill merges below reach both
 PRESETS["/goldfish-natural.glb"] = PRESETS["/goldfish.glb"];   // goldfish-natural.glb (2026-10-12): mouth2 + tapered tail root, faired fin roots, patch texture rebaked (Image-bot-01a, /root/goldfish-natural-2026-10-11/)
 PRESETS["/goldfish-natural-lo.glb"] = PRESETS["/goldfish.glb"];   // goldfish-natural-lo.glb (2026-10-12): ~20k-triangle decimated copy of goldfish-natural.glb (all custom attributes + mouthRig kept); used in Low and for every goldfish after the 2nd (work-goldfish/lo/)
+PRESETS["/goldfish-natural-v2.glb"] = PRESETS["/goldfish.glb"];   // goldfish-natural-v2.glb (2026-10-12): natural + mouth blend-zone weights re-solved (0 flipped triangles, rictus stretch within limits), gill sliver removed (work-goldfish/v2/); the default goldfish
+PRESETS["/goldfish-natural-v2-lo.glb"] = PRESETS["/goldfish.glb"];   // goldfish-natural-v2-lo.glb: ~20k-triangle decimated v2 (work-goldfish/lo/make_lo.py); Low quality and every goldfish after the 2nd
 PRESETS["/goldfish-mouth2.glb"] = PRESETS["/goldfish.glb"];   // goldfish-mouth2.glb (2026-10-12): goldfish-mouth.glb with the C21 lip-rim relaxation + rebuilt mouth pocket (no sawtooth inside the open mouth)
 PRESETS["/goldfish-mouth.glb"] = PRESETS["/goldfish.glb"];   // goldfish-mouth.glb (2026-10-12): thin5 + a real mouth slit and gill slits cut into the skin (twinned lips, mouth/gill pockets) with per-vertex _PART/_WGT bone-part weights driving a hinged jaw, protrusible premaxilla, maxillae, opercula and branchiostegals (work-goldfish/mouth/)
 PRESETS["/goldfish-thin4.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin4.glb (2026-10-12): thin3 + body-skin holes closed at every fin root and the tail (work-goldfish/thin4/)
@@ -111,11 +169,19 @@ PRESETS["/goldfish-thin.glb"] = PRESETS["/goldfish.glb"];   // goldfish-thin.glb
 //   lfk/lfz/lg = legacy fin-bone stiffness scale / damping-ratio scale / drag-gain; vk vdk vg vmax vrip vfl vz = caudal veil (spring base, per-joint falloff, drag gain, bend cap, ripple, flutter, damping ratio);
 //   dwa dph dkw dz dg dfl dcap dcouple = dorsal/anal ray wave; eyemax eyek eyetrk vor = eye range / saccade interval scale / gaze-tracks-turn gain / VOR; gill jaw gillrate gillmax pec pecf pecfmax = breathing + pectoral feel.
 const BETTA_FLOW = {
-  1: { lfk: 0.7, lfz: 0.8, lg: 0.7, vk: 0.7, vdk: 0.5, vg: 1.1, vmax: 1.6, vrip: 0.10, vfl: 0.08, vz: 0.20, dwa: 0.22, dkw: 17, dz: 0.34, dg: 0.22, dfl: 0.07, dcap: 0.75, eyemax: 20, eyek: 0.7, eyetrk: 0.5, vor: 0.4, gill: 10, jaw: 9, gillrate: 75, gillmax: 125, pec: 24, pecf: 1.4, pecfmax: 3.0 },
-  2: { lfk: 0.5, lfz: 0.65, lg: 0.9, vk: 0.45, vdk: 0.45, vg: 1.3, vmax: 1.9, vrip: 0.16, vfl: 0.12, vz: 0.14, dwa: 0.30, dkw: 13, dz: 0.28, dg: 0.28, dfl: 0.10, dcap: 0.95, eyemax: 24, eyek: 0.5, eyetrk: 0.8, vor: 0.5, gill: 13, jaw: 11, gillrate: 80, gillmax: 135, pec: 28, pecf: 1.6, pecfmax: 3.4 },
-  3: { lfk: 0.35, lfz: 0.5, lg: 1.1, vk: 0.3, vdk: 0.4, vg: 1.5, vmax: 2.2, vrip: 0.24, vfl: 0.18, vz: 0.10, dwa: 0.40, dkw: 10, dz: 0.22, dg: 0.34, dfl: 0.14, dcap: 1.2, eyemax: 26, eyek: 0.4, eyetrk: 1.0, vor: 0.6, gill: 15, jaw: 12, gillrate: 85, gillmax: 140, pec: 32, pecf: 1.8, pecfmax: 3.8 } };
+  1: { lfk: 0.7, lfz: 0.8, lg: 0.7, vk: 0.7, vdk: 0.5, vg: 1.1, vmax: 1.6, vrip: 0.10, vfl: 0.08, vz: 0.20, dwa: 0.22, dkw: 17, dz: 0.34, dg: 0.22, dfl: 0.07, dcap: 0.75, eyemax: 20, eyek: 0.7, eyetrk: 0.5, vor: 0.4, gill: 4.5, jaw: 4.5, gillrate: 40, gillmax: 70, pec: 24, pecf: 1.4, pecfmax: 3.0 },
+  2: { lfk: 0.5, lfz: 0.65, lg: 0.9, vk: 0.45, vdk: 0.45, vg: 1.3, vmax: 1.9, vrip: 0.16, vfl: 0.12, vz: 0.14, dwa: 0.30, dkw: 13, dz: 0.28, dg: 0.28, dfl: 0.10, dcap: 0.95, eyemax: 24, eyek: 0.5, eyetrk: 0.8, vor: 0.5, gill: 6, jaw: 5, gillrate: 40, gillmax: 70, pec: 28, pecf: 1.6, pecfmax: 3.4 },
+  3: { lfk: 0.35, lfz: 0.5, lg: 1.1, vk: 0.3, vdk: 0.4, vg: 1.5, vmax: 2.2, vrip: 0.24, vfl: 0.18, vz: 0.10, dwa: 0.40, dkw: 10, dz: 0.22, dg: 0.34, dfl: 0.14, dcap: 1.2, eyemax: 26, eyek: 0.4, eyetrk: 1.0, vor: 0.6, gill: 7, jaw: 6, gillrate: 40, gillmax: 70, pec: 32, pecf: 1.8, pecfmax: 3.8 } };
 const BETTA_FLOWN = Q.has("flow") ? Math.round(+Q.get("flow")) : 2;
-if (BETTA_FLOW[BETTA_FLOWN]) Object.assign(PRESETS["/guppies.glb"], BETTA_FLOW[BETTA_FLOWN]);   // (merged into the betta preset only; the goldfish/other presets never see this)
+const BETTA_CHILL = { pec: 30, pecf: 1.1, pecfmax: 2.2 };   // betta-chill: relaxed, steady pectoral paddle (the main visible propulsion while cruising); ?gait=default restores the old values
+if (BETTA_FLOW[BETTA_FLOWN]) Object.assign(PRESETS["/guppies.glb"], BETTA_FLOW[BETTA_FLOWN]);
+if (Q.get("gait") !== "default") Object.assign(PRESETS["/guppies.glb"], BETTA_CHILL);   // (after the flow preset; URL knobs still win)   // (merged into the betta preset only; the goldfish/other presets never see this)
+// betta-gills3d.glb (2026-10-14; plan droidware-server/fish/betta-3d-gills Rev 3 + reviews r1/r2): guppies.glb + a split gill cover (twins appended, original vertex order kept) + a modelled gill chamber (gill* nodes) + per-vertex _GILLW / _GILLC.
+// A COPY of the (already merged) betta preset, so guppies.glb keeps its own breathing (r2 m-8): gill = the BASE opening in degrees (breathing peak = base x (1 + 0.35 x effort) = 16.2 deg at effort 1);
+// gflare = 1: the betta flares its covers (peak 45 deg, about every 20-60 s, own PRNG); the Owner's visibility choice only changes these two numbers (option 2: gflare 0; option 3: gill 25, gflare 0). URL ?gill= ?gflare= win.
+PRESETS["/betta-gills3d.glb"] = Object.assign({}, PRESETS["/guppies.glb"], { gill: 12, gflare: 1 });
+PRESETS["/betta-gills3d-dark.glb"] = PRESETS["/betta-gills3d.glb"];   // betta-gills3d-dark.glb (2026-10-15; brief droidware-server/fish/betta-gill-white-strip): betta-gills3d.glb with the chamber recoloured dark (COLOR_0 only: the pale arch tubes were the white "LED strip" in the slit); same preset object = identical motion
+PRESETS["/betta-gills3d-simple.glb"] = PRESETS["/betta-gills3d-dark.glb"];   // betta-gills3d-simple.glb (2026-10-15; plan droidware-server/fish/betta-3d-gills/rev4-simplify-and-port): the dark build's preset object = identical motion
 // persistence: URL params win, then localStorage (keys fish.q / fish.tl / fish.fish / fish.n)
 const LK = k => "fish." + (k === "fish" || k === "n" ? PAGE + "." : "") + k;   // fish + count are remembered per page
 const LS = { get(k) { try { return localStorage.getItem(LK(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(LK(k), v); } catch (e) {} } };
@@ -127,11 +193,25 @@ let TL = tl0 == null ? 0 : Math.max(0, Math.min(1, +tl0 || 0)), TLON = TL > 0 ? 
 const TLMODE = Q.get("tlm") === "hash" ? "hash" : "a2c", TLMIN = Q.has("tla") ? +Q.get("tla") : 0.55, TLGLOW = Q.has("tlg") ? +Q.get("tlg") : 1;   // translucent fins/tail (models with a per-vertex _fin attribute only): ?tl=0..1 strength (0 = off, default 1), ?tlm=a2c|hash coverage method, ?tla= alpha at the margin, ?tlg= back-light glow gain
 // fins/tail: alpha falls from 1 (fin<0.35) to TLMIN at the free margin, fin rays (darker/denser texture stripes, = texture luminance below its own blurred value) keep +0.25; plus a warm back-light (light behind the sheet / fish looking toward the light) scaled by _fin.
 // Order-independent on ONE double-sided mesh: alpha-to-coverage (MSAA, per-sample depth) or alpha hash (stochastic discard) - no blending, no sorting; body has fin=0 -> alpha 1 -> fully opaque.
+// FIN GRAIN (2026-10-12 polish): alpha-to-coverage always leaves the GPU's own per-pixel sample mask (a visible screen-door at 50 percent coverage, no matter what noise is added), so High (default) now draws the fin
+// triangles as a SECOND DRAW GROUP of the same mesh with ordinary alpha blending (no depth write, drawn after the opaque body in the same render pass; one pass, no sorting beyond three.js's own back-then-front
+// double-sided order): the fade is a true smooth gradient. ?fgn=bn = the previous a2c with a blue-noise dither (?fgna= amplitude), ?fgn=ign = the old a2c + interleaved-gradient noise. Before that: High (MSAA) kept alpha-to-coverage but dithers the alpha with a 64x64 BLUE-noise tile (void-and-cluster, work-goldfish/polish/bn.py) at one coverage step (1/4) instead of the old per-pixel
+// interleaved-gradient noise at 0.3: the same mean opacity, but the error sits at high spatial frequency, so up close the fade reads as a smooth gradient, not grain. ?fgn=ign restores the old noise for A/B.
+// Low (no MSAA; alpha-to-coverage there is only a harsh 1-sample threshold) uses SOLID fins (alpha 1, back-light and ray pattern kept) with a soft alpha-TESTED edge: only the last ~6 percent of the fin towards the free margin is
+// eroded, through a 4x4 Bayer threshold, so the outline fades without any blending, MSAA or sorting. ?fgn=ign also keeps the old Low (a2c) path.
+const FGM = Q.get("fgn") || "bl", FGN_OLD = FGM === "ign", FGNA = Q.has("fgna") ? +Q.get("fgna") : 0.25;   // blue-noise dither amplitude (alpha units; 0.25 = one 4x-MSAA coverage step)
+let BNTEX = null;
+function blueTex() {
+  if (BNTEX) return BNTEX;
+  const bin = atob("cpbHJ9U6lxnE95C8UpsC1Hv0CnMyWYLYcKkEKK1rCdV8rwyIpiBm4i5ecP4u3g1kJ6dahbebKXIb3LiR82K7+SDlSKPrAXKuZEUSbh/6Za01nMBL+5ciujhci+hX8cOiF0nXL3bCj0CjzgWuWJa6943SwRrcYOWzRJ5oSM8VmUGJrxB3W43NK+Kc2LHOOYjKIWLXGqnMRfET4cdBmCA8YPhvmuxWA/sVge1Gh9EeSXUEQW4tSn0PjvotD+l4MbJc22n3Lrg+/lELgy9WeaIQUfB+O4hnAHePsS5zDb2A2pQqvhs8yq5u1lYluTVq8Z8wteeg/K3GOc9afsCnVMjvGDVQypXgEn+9pmj0B91G5ryYB9+37S/eTWOc1k/6bAK4U4TiYZInSJy/cY/jCr6D3VMWgF4JlGscreM+IpQIbp23BIAgTKBsIuhAxZStI3QyX6xKI1qWwQ73IH+zK6dD7hPQpwz0gug3CPccoVtBFGXHmDjRJu7bTIkCcdb9hUnQde6pZMTyNtRZiR02Y/2M1BzzknjRQKuByT3mEVzejWZ7MUZutlIWxmKrT8h71q76I3Lxu1R5pTH3ylGiYTjhH1tB3TKJBrCWDbTle85SFLJsN8gM/RdsK1amaZbCOBvLsf2X3CHTpnfghzrmJpc2ikyqAY4/tQtlmSC5Lha+po8pu5MX0153Q/ptSqIEu5pG4IdRo2G54pLuA9ImguigTSRbB3g6X5FELBG6awTuWRHl0ipm6x7XwkN38oLmaw/3ywty+k664SnEGNop8Dt49gm8I+kyhEkevntC/FBvCdmSweajxfkB6sud/Uutdsq3aTmXx36eWoTgEVibP81PfOmhWqs4HZ+HUqmRXYTUZi2lXn3NmAbSoTVgtp0Ys+9+M2xCFIMqsG9VfCGM2UIogqJS/w5LNvYmqje22AWOsDOIQyLPfPBlAulzNskMoBzCjdgVQmrxVnH12AuGzztepxb1uFjiR40XtzriYROe9wjhHHGn3bYFcI7taSh18B5mB8Likg6+Q6/MFPayUOZB7lI0+qjEK7MWjihT5GsixkfTjSdznsBj9dQOpL8x0WVHxI3WJmSG0FHADEvHpljUuP51YC9R3ooufEVoInWMrW0DtnhYD4jfP8mreDSb+YgCYa7nDNYbM5dOh3D0VJJ5rjNaukLrFqI935p8+BU3l0mfE7L0o2kf/J3YwpXfMBnOhuAgmutOdZ9eEPC0DVC73XkyT4I/7XfKJug9BLIf8RHkgQObelf7JGIatEGM3XklVds+gwXTtlMPXDUJt0z+XKBEZ7w5zQD9MNqLRMxyKpkd95vOtF+oCbNamNqBOMtcpCj4xjCyjcd06ivQawPtyXGTIsZKdzmQ5ayE82GjfRDCLfZ/GKuNbLxRaSPnqVzrRr5rBiiQSvluzRpovU6Zcz7Ta1EQ1zsHrIZUn75drTT4vGHil+wawG8n3UDLJds66ZUG1F7iRSSmFNOYfDoIsYAW2VbvyBiDLUGj/SvhBu65F5Op5nVd80fZDfwhRYkXTgp/NRGoZPRIA3eZEm2RuVVxr0uZGsDqe/U/wBr7jMtjNI2qeTqg1bbjew5gi60khUnyNYgeu5Eubpk5f+jFpNOa8bdX1iyIo9GyVL3wSguHIMgp82eEM1WQDa9k1lMi47j+SA/fZlUBklC51UVt2ljBCWbLSqHkG821XNQPbytmQiFykETIE1kw/B1/L6TR+mDkizuo2QbMbd9LKXemQZgDbyy/iyX2cyDuL54Y9jefdN6uKPkCZYBK8SaokFLijqzM4Qf6e7Xraoo/zOdnJEKdCXa4E02WtCaigOrDFPV7UM6h7E2vxjunymV5w5EL0CFCl35V1jzIkwt5QfS8Af0WXjCgZyI9lA3ioVoEjbR6wTHcW/5w6Dxc+AGZNlyz2iOIXRl6DZbcgkkJ4z9WtYP8YOcUuIqrFN6yYc4aNnjIOoa7SujCqNdMuhl3w0naEfFLoR3DK4LQG7xEaNGQCj2p8zbS5GgwVxXzk6ok72gxqQXDN2vyLHNUM+afh7BXlOls2xGAVgFwLoLVKPmmNl2TbM6FQ5wKqmqI3LEf8HTHYg63j0Oo+btvsS5d134Vy1KRdNpMGJ2//IQFS2vsJ0kGrCWXzzLsj/VerUJlhR/gricB57Ni9EzjMBFWfzFN5J1/VSLIA4Yl3kHGigK6nuU+8x2ohMliPB+lxSzUD7941Vf4Q7RjoiPED+GYB+3AdUD1U3cy1yJ5wJH9otS6lBktwP1ynWDOT5wOdv5OOXAihbRbL+EE7JDaXHbyjl+jHZw1i3QZ3Xw/qlMyeNBOnAzUhKPJEYinPAVhRiNpBvZx2EUK3DLuFX7nZNEhmujDYN4Jz5VEsXlOEbY+G6wy+sVp570I8E8c1W2M/rUXbzFbsxlmPflbxe6cz6/mh1Q3rl+KrFG8lD6zLKY8tlmADDWkS3r/aiHFMfaX0lSA2USKDymlXsOCresGySFEoue9+48s6LqSH0hvLH4WO8Pens8X7ymCGm7dWfkGjO8WrNP4jcgrEqPqWal+ZAvmvARcsNR6R9cgli9ImmJ/2V+IHUVx10wFbbDjDtlT9pZ0KBB7QcKdYffHDofDdEjJaypJdBtnsNg6iwfdJMo6dC6X7zxV/ZE2cPRauxXxM8IAO9ubC7+ggtM0mYS8p2UCuEv7kFnhALFGL6VMJp/cMYTsmLw+61eCTdFxmUi0jvenZyLJFqkA5bYQ0nXfpVCT93mwYfA2WOshYv5NHj3eMOpgq8gicTt65ZLXcPASX7kEqF0P3ZQA9Ry6MfsS5FoYS9iBnXLBXIZMoT2KK2cZuShTzCONdhfDQrQHcMeRes2agQo27ZnVvRtkB7DLQJH3UOAlzX0xpMNnk1SsaIMoyLIN7CZJ8TDJIGj5BLPMheRvpQ7mS6z4k33hpNYt7Q1RH0HbaLUXVyyH/FEyhGqtHXU8i7FObdREKuwJyzuh122SOF23iBqZ4X3QrFjoN0oI1TmAuyvZAmcqVRaFWaBpr8TwpIpIffKlQMGV6hjhLNW+n2P9HeQMgbN02osW8k8F/HrhzGatQ2EKNI4kdpb+qlqV9WiZWT24zZv2N78a+jN3WygQ2MMFbNwSdrRHoFiGCeoVNMGPXPibIUJfu3YzrMJFEjLbD/u+ne9G3b8XaSrDHUcZz3yi5RBGa63bRIPKA5O9/WE3jrFbJdBiAcX7OG9H2HeiP7oVUsfnpSPglWIghqBxTpJ4J1SvbQuhUtmD7XTcsQr9InKL7SR9CV+a3U/qPnugHuJG95057o9sH5fNq4pV7yRz2jluBIFVyQ/v0Fb1C8XqOdKDHOWJ0T21ETahUoo8xVU0wV3Qluu2LR6ncRO2UctwC8WGU64v3bVU8xIqygLTiKjxlb37NIxtQJwrtYEfo14D9MIzXSV1445ivyfnZpWo4AayPBtPduNmwTLViSvykzN4HdYOeUoKgTNhuW6eSmAtEFolRrAZ6bkBZeGqSW27kERpnLn4AqRF+wjNfRvvFIFOm278wjiPDviYXekEpUu77ahn+sKf5MWl5pA9/BfntNB/4G+a0Ex615I1z/4t5Rmp1w5MlcxWJrJqmEW6N2PK9CrbhQKmz1R9IUe8embYEl1BJYs6YCdwRQjLIXa+k2pBnsII7WAuqh3yVpcHdsxUfCrngDhr7IPUFfNZ3I+rQ3cXV65kJvE+udumFz32JIPSmOCzEe+VFfl9V9+nTzUF4x5UN4kTxIs9bxTERrKNOvmxY8kTuhunP3YvpgIp1Qy9odNC6otyoQhqiuPGlK04twJzR4HOUde1njWIDdPzi6x5/rjZcfRQ3rCC7CjaXxmYBEOO9p0yYOCUvuiFb/uKYe0xEsdMGMw1+lMsYAhQcP5XwOovpHM4ZCbG9WUpc1fPLGaVRimgDLwhW6JqDqbtcL7fI1Ry6cMGUxxCXsQ6Uh+Vfmyas95dkL8UhLHO64gtGZJlCsUajO4BdEa4occVQ+kNqhqDzGaR+DnPheJIxjBZpX3SEEiFq/x+1ZwQrujPRLn/CTiAJeVKofFvQBOkxuU/q/RK3rlOpeaRHT/ulL6AUsj2V+YwSXgGTbc0ex2J6As8sZPaJTpqtC/vI49xB54lUM1p86sBeDfXJJbdSmF41yOGapooe9MTWt1+CGMkpOA5crkIqd7EmPAZY/qvTsxu/ym9ZO6fzwtPdMlbNN/EY+GRHEKYy2O7DV2/eyi4FZxYtzcN+D9mvDOeylCz+GwAjiWaRYUWXCrYjaDTEJMjoUeIUwB8GFuQ46pE87F8F4YusnXBVSr8gK0++APqjzv7BdHpf8erIIr+biLjizJI2MBd69Bs/a9zPwBWL3TvYr7bGuvHqUf0vh6BA5kfU/mqSPAM44nUEk3ijmyjVdNowXdMpVoYcORPBrA9dg/Qm30VqzQPlDsewH7pyrZF1jYIeptpN4zcKWM8zmnbPsFtBdRfnzwYZ5WnLhvMMoISqSqWGzGM1UaTwdZe8KO/YCHkT/aAxFLWpFgpqmoNmX+vWvcts9Eec7iGov4utX/pnTiQIr1z8rRA2WTxULDlRfBT4MbysAP2Jjd/FJEsTfuuOG+fI2fuB4n1EkuH/CfoGo7MSwxd+kQH6RlOkl4UKFHfxYBN3C2DyAx6ughzH72KCmmBPl93m7doqOdW2gR4jMYJ2US2my5kzZXfNbtlTsA9onXkh5ywWst4vwvuzY2uEmT/CqReHlXjOZ+H3FmaONGoFLkk61ARzEMgxYWqQBvtWL6HE996P7p1X84Xp+FuAu8jvTkW2iuVPuJqoDxZ8nkvskGOv/erkiT+Q8cs83le/Unaickz4nz7mjRo88tlmS11+TtZsOwg+QqbRXou0olT1mOqTH/wZRyoLX27HtJHnOUa2HIDQG3OXxhspgHKHDF0nQpqqo9bBnK7EFIptN1IrByUzgKgUDmz5In1EZ61Nn4L9G3FA7XYVfYH32eJAcRshFAp0YbrDq7A6YxNspTjwFXqQh2/LNBH7KTTkBWCBcli5idphsd8VyZjukBbHP+XyiGQM51GdozIS5s1rPhWJrX1lq9XMJdMfToU2WdAgxArtX/5T96riyd8PmvlWPWcQH64R9kR8pnNBdty6cFrTS+36lzR/A40siCB6hQ/k98KO2YQ3sRx8ieiWfolzan1bdWjAZh2E1/gCf+fMLhwKtIN/5YzrxhCdzSmkSqHBeSfeUcWgyepZO9u0VG3fMtipMnse0QfqATbyIW2cwZYNo8fWzNo8jzKsVS/Hk3ZEoyvT3Ee5mWn4Lf7TxPSQ6rOYgzWr2rDkts+E6MraOwbMIdOGZ68/GOPPWsRNJbtftxIxuuswhyeejCUbs+EpTryX9+lxk2JLVgMhGe08Vh9JDvshjHoSRxXtozkxgieSf/Bddw1ilEs571S89JKrhi9mhN6Q4XVTecP9EAB7lbEewcnO4ED0g=="), d = new Uint8Array(4096); for (let i = 0; i < 4096; i++) d[i] = bin.charCodeAt(i);
+  BNTEX = new THREE.DataTexture(d, 64, 64, THREE.RedFormat, THREE.UnsignedByteType); BNTEX.minFilter = BNTEX.magFilter = THREE.NearestFilter; BNTEX.wrapS = BNTEX.wrapT = THREE.RepeatWrapping; BNTEX.needsUpdate = true; return BNTEX;
+}
 function patchFin(m) {
+  const LOWFIN = QEFF === "low" && !FGN_OLD, MODE = TLMODE === "hash" ? "hash" : FGN_OLD ? "ign" : LOWFIN ? "low" : FGM === "bn" ? "bn" : "bl";
   m.onBeforeCompile = sh => {
-    sh.uniforms.uTL = { value: TL }; sh.uniforms.uTLMin = { value: TLMIN }; sh.uniforms.uTLGlow = { value: TLGLOW };
+    sh.uniforms.uTL = { value: TL }; sh.uniforms.uTLMin = { value: TLMIN }; sh.uniforms.uTLGlow = { value: TLGLOW }; sh.uniforms.uBN = { value: blueTex() };
     sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float _fin;\nvarying float vFin;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvFin = _fin;");
-    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vFin;\nuniform float uTL, uTLMin, uTLGlow;\nfloat tlA = 1.0;")
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vFin;\nuniform float uTL, uTLMin, uTLGlow;\nuniform sampler2D uBN;\nfloat tlA = 1.0;")
       .replace("#include <alphamap_fragment>", `#include <alphamap_fragment>
       { float s = smoothstep(0.35, 1.0, vFin) * uTL;
         float ray = 0.0;
@@ -139,7 +219,10 @@ function patchFin(m) {
           float l0 = dot(texture2D(map, vMapUv).rgb, vec3(0.3, 0.59, 0.11)), l1 = dot(textureLod(map, vMapUv, 3.0).rgb, vec3(0.3, 0.59, 0.11));
           ray = clamp((l1 - l0) / max(l1, 0.02) * 3.0, 0.0, 1.0);
         #endif
-        tlA = mix(1.0, clamp(uTLMin + 0.25 * ray, 0.0, 1.0), s); diffuseColor.a *= tlA; }`)
+        tlA = mix(1.0, clamp(uTLMin + 0.25 * ray, 0.0, 1.0), s);
+        ${MODE === "low" ? `{ float e = smoothstep(0.94, 1.0, vFin) * uTL; ivec2 q = ivec2(gl_FragCoord.xy) & 3;
+          const float B[16] = float[16](0.5, 8.5, 2.5, 10.5, 12.5, 4.5, 14.5, 6.5, 3.5, 11.5, 1.5, 9.5, 15.5, 7.5, 13.5, 5.5);
+          diffuseColor.a = (1.0 - e) > B[q.y * 4 + q.x] / 16.0 ? 1.0 : 0.0; }` : "diffuseColor.a *= tlA;"} }`)
       .replace("#include <opaque_fragment>", `{ float s = smoothstep(0.2, 1.0, vFin) * uTL;
         vec3 Ld = vec3(0.0, 1.0, 0.0);
         #if NUM_DIR_LIGHTS > 0
@@ -149,13 +232,27 @@ function patchFin(m) {
         float back = clamp(-dot(nV, Ld) * 0.7 + 0.3, 0.0, 1.0) * (0.5 + 0.5 * pow(clamp(-dot(vV, Ld), 0.0, 1.0), 2.0));
         outgoingLight += diffuseColor.rgb * vec3(1.0, 0.55, 0.2) * back * s * uTLGlow * 2.0 * (1.0 - 0.5 * tlA); }
       #include <opaque_fragment>
-      ${TLMODE === "a2c" ? "gl_FragColor.a = tlA < 1.0 ? clamp(tlA + (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) * 0.3, 0.0, 1.0) : 1.0;" : ""}`);
+      ${MODE === "bn" ? "gl_FragColor.a = tlA < 1.0 ? clamp(tlA + (texelFetch(uBN, ivec2(gl_FragCoord.xy) & 63, 0).r - 0.5) * " + FGNA.toFixed(3) + ", 0.0, 1.0) : 1.0;"
+        : MODE === "ign" ? "gl_FragColor.a = tlA < 1.0 ? clamp(tlA + (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) * 0.3, 0.0, 1.0) : 1.0;" : ""}`);
   };
-  m.customProgramCacheKey = () => "fin-" + TLMODE;
-  if (TLMODE === "hash") m.alphaHash = true; else m.alphaToCoverage = true;
-  m.alphaTest = 0;
+  m.customProgramCacheKey = () => "fin-" + MODE;
+  if (MODE === "hash") m.alphaHash = true; else if (MODE === "low" || MODE === "bl") m.alphaToCoverage = false; else m.alphaToCoverage = true;
+  m.alphaTest = MODE === "low" ? 0.5 : 0;
+  if (MODE === "bl") { m.transparent = true; m.depthWrite = false; }
 }
 const tmp = new THREE.Vector3(), D2R = Math.PI / 180;
+// ================= GAIT PROFILES (2026-10-12, betta-chill) =================
+// ONE parametrised behaviour profile per species; the gait code in wander() reads F.G and has a single path. The default profile holds EXACTLY the values that used to be hard-coded (goldfish, tetra, guppy2.. all use it).
+//   omA omS omI omMin omMax: tail-beat rate (beats/s) = clamp(omA + omS*tSpeed + omI*|intent|, omMin, omMax) * RATE / sqrt(size)        nb0 nbR: a stroke bout lasts nb0 + floor(rand*nbR) beats
+//   gl0 glA glB: glide = GLIDE*(gl0 + rand*(tSpeed < 0.9 ? glA : glB)) s     beatC: residual beat while gliding (0.06 = fins/tail almost still)     spd: multiplier on the cruise-speed pick
+//   bodyK rollK: body-bend (wave + C-bend) and roll/head-recoil multipliers while CRUISING; they ease back to 1 during a gaze burst. hvP hvMin hvMax: chance that a glide is a hover pause, and its length range (s).
+//   gz: gaze-change bursts (null = none). gzMin gzMax = random interval (s); gzLead = s the eyes move before the body follows; dashV = peak thrust speed of the burst; dashOm = beats/s; dashBeats = beats; dashGlide = glide multiplier after it.
+const GAIT_DEF = { omA: 1.3, omS: 1.1, omI: 0.9, omMin: 1.5, omMax: 3.5, nb0: 2, nbR: 3, gl0: 0.6, glA: 1.4, glB: 0.8, beatC: 0.06, spd: 1, bodyK: 1, rollK: 1, hvP: 0, hvMin: 2, hvMax: 6, gz: 0, gzMin: 6, gzMax: 20, gzLead: 0.45, dashV: 0, dashOm: 2.6, dashBeats: 2, dashGlide: 1 };
+const GAITS = {
+  default: GAIT_DEF,
+  // betta: mostly slow cruising + hovering (gentle fin sculling), a short burst every 6-20 s that follows a gaze change (eyes first, then the body turns and darts, then settles)
+  betta: Object.assign({}, GAIT_DEF, { omA: 0.45, omS: 0.5, omI: 0.45, omMin: 0.8, omMax: 1.5, nb0: 1, nbR: 3, gl0: 1.1, glA: 2.4, glB: 1.8, beatC: 0.08, spd: 0.33, bodyK: 0.6, rollK: 0.1, hvP: 0.55, hvMin: 2, hvMax: 6, gz: 1, dashV: 1.2, dashOm: 2.4, dashBeats: 3, dashGlide: 1.6 })
+};
 // ================= PER-FISH STATE (2026-10-12, quality + picker) =================
 // Everything that used to be a module-level variable of THE fish (position/velocity/gait/steering/wall state, skeleton, rig, fins, anatomy, species presets and tunables)
 // lives in one object per fish. `F` is the fish currently being stepped/assembled; every function below reads and writes F.<state>. ONE code path for 1..8 fish.
@@ -165,6 +262,7 @@ function newFish(i) {
     i, outer: new THREE.Group(), corr: new THREE.Group(), root: null, mixer: null, action: null, bones: [],
     P: new THREE.Vector3(), V: new THREE.Vector3(1, 0, 0), TGT: new THREE.Vector3(), VEL: new THREE.Vector3(0.9, 0, 0),
     speed: 0.9, tSpeed: 0.9, nextPick: 0, turn: 0, phase: 0,
+    G: GAIT_DEF, bk: 0, dashUntil: -1, gzNext: 0, gzLast: -1e9, gz: null,
     gait: "coast", gaitEnd: 0, coastStart: 0, beat: 0.3, omega: 5, steer: 0, BEND_SIGN: 1,
     yawRate: 0, atWall: false, wallTgt: false, wallSince: 0, pressLat: 0, pressY: 0, impact: 0, ram: 0,   // ram: into-wall speed measured BEFORE the wall stops it; impact: extra bend from ramming the glass; pressLat/pressY: wall pressure (signed, body frame / vertical)
     INTENT: 0, wallHits: 0, tailHits: 0, HEADS: null, PUSH: { v: 0, tgt: 0 }, VEIL: { acc: 0, sp: 0, spr: 0 },
@@ -182,8 +280,9 @@ const TUNE = k => (Q.has(k) ? +Q.get(k) : (F.PRE[k] != null ? F.PRE[k] : 1));   
 const syncAx = () => { F.AX = "z"; let m = -1; for (const a of AXES) if (F.AMPS[a] > m) { m = F.AMPS[a]; F.AX = a; } F.AMP = F.AMPS[F.AX]; };   // AX/AMP = the dominant axis (calibration, fin ripple, wall flatten)
 function initSpecies(f, base, key) {
   F = f; f.BASE = base; f.MKEY = key; f.MODEL = key;
-  f.PRE = PRESETS[key] || (/(^|\/)goldfish(-thin[23]?|-mouth2?|-natural)?\.glb$/.test(key) ? PRESETS["/goldfish.glb"] : null) || {};
+  f.PRE = PRESETS[key] || (/(^|\/)betta-(mouth2?|gills3d(-dark|-simple)?)\.glb$/.test(key) ? PRESETS["/guppies.glb"] : null) || (/(^|\/)goldfish(-thin[23]?|-mouth2?|-natural(-v2)?)?\.glb$/.test(key) ? PRESETS["/goldfish.glb"] : null) || {};
   f.GOLD = f.PRE.rig === "goldfish";
+  { const gn = Q.has("gait") ? Q.get("gait") : f.PRE.gait; f.G = Object.assign({}, GAITS[gn] || GAIT_DEF); for (const k in f.G) if (Q.has("g_" + k)) f.G[k] = +Q.get("g_" + k); }   // ?gait=default|betta, ?g_<knob>= single overrides
   f.BENDK = TUNE("bend"); f.RATE = TUNE("rate"); f.GLIDE = TUNE("glide"); f.SPEEDK = TUNE("speed"); f.FK = TUNE("fk");
   f.FZ = Q.has("fz") ? +Q.get("fz") : (f.PRE.fz || 0.24); f.RIP = Q.has("rip") ? +Q.get("rip") : (f.PRE.rip || 0);
   f.CUM_BEND = Q.has("cum") ? +Q.get("cum") : (f.PRE.cum != null ? f.PRE.cum : 0.5);
@@ -207,8 +306,8 @@ if (DISPLAY) document.body.classList.add("display");
 const clampN = v => Math.max(1, Math.min(8, Math.round(+v) || 1));
 const modelOf = tok => {
   tok = tok.trim().toLowerCase();
-  if (tok === "betta") return "/guppies.glb";
-  if (tok === "goldfish") return /goldfish/.test(MKEY0) ? MKEY0 : "/goldfish-natural.glb";
+  if (tok === "betta") return "/betta-gills3d-simple.glb";   // 2026-10-15: the default betta is betta-gills3d-simple.glb (simplified chamber); betta-gills3d-dark.glb = the dark chamber with arches + filaments (still reachable by name); 2026-10-14 it was betta-gills3d.glb (still reachable by name); ?m=guppies.glb = the betta before the 3D gills, kept for rollback
+  if (tok === "goldfish") return /goldfish/.test(MKEY0) ? MKEY0 : "/goldfish-natural-v2.glb";
   const k = "/" + tok.replace(/\.glb$/, "") + ".glb"; return KNOWN.test(k) ? k : null;
 };
 // fish=betta | goldfish | mix | betta,goldfish | <any known model name>; fish i takes entry i mod list length. No fish param (and no stored one, and no m/n in the URL) = the single model of ?m= (default betta).
@@ -224,12 +323,12 @@ function fishPlan() {
   const out = []; let gold = 0;
   for (let i = 0; i < (DISPLAY ? NFISH : 1); i++) {
     const base = FLIST[i % FLIST.length]; let key = base;
-    if (base === "/goldfish-natural.glb") { if (QEFF === "low" || gold >= 2) key = "/goldfish-natural-lo.glb"; gold++; }
+    if (base === "/goldfish-natural.glb" || base === "/goldfish-natural-v2.glb") { if (QEFF === "low" || gold >= 2) key = base.replace(".glb", "-lo.glb"); gold++; }
     out.push({ base, key });
   }
   return out;
 }
-const speciesUi = () => { const l = FLIST.map(k => k === "/guppies.glb" ? "betta" : (/goldfish/.test(k) ? "goldfish" : k)), s = new Set(l); return s.size > 1 ? "mix" : l[0]; };
+const speciesUi = () => { const l = FLIST.map(k => (k === "/guppies.glb" || k === "/betta-mouth.glb" || k === "/betta-mouth2.glb" || k === "/betta-gills3d.glb" || k === "/betta-gills3d-dark.glb" || k === "/betta-gills3d-simple.glb") ? "betta" : (/goldfish/.test(k) ? "goldfish" : k)), s = new Set(l); return s.size > 1 ? "mix" : l[0]; };
 function syncUrl() {
   const u = new URLSearchParams(location.search); u.set("q", QMODE); u.set("tl", String(TL)); u.set("n", String(NFISH)); if (FISHTOK) u.set("fish", FISHTOK);
   try { history.replaceState(null, "", location.pathname + "?" + u); } catch (e) {}
@@ -252,7 +351,7 @@ function makeRenderer() {
   rs();
   if (controls) controls.dispose();
   controls = new OrbitControls(cam, cv); controls.enableDamping = true; controls.enabled = !DISPLAY;
-  if (DISPLAY) cv.addEventListener("click", () => { if (!isFull()) toggleFull(); });
+  if (DISPLAY) cv.addEventListener("click", e => { if (!pickClick(e) && !isFull()) toggleFull(); });   // a click that picked / dropped a fish selection is consumed; anything else keeps today's behaviour (fullscreen)
 }
 makeRenderer();
 scene.add(new THREE.HemisphereLight(0xffffff, 0x335577, 1.4));
@@ -273,11 +372,11 @@ function loadGlb(key) {
 async function loadAll(plan) {
   const keys = [...new Set(plan.map(p => p.key))], gs = await Promise.all(keys.map(loadGlb)), o = {}; keys.forEach((k, i) => { o[k] = gs[i]; }); return o;
 }
-const KIN_NUM = ["speed", "tSpeed", "nextPick", "turn", "phase", "gaitEnd", "coastStart", "beat", "omega", "steer", "yawRate", "wallSince", "pressLat", "pressY", "impact", "ram"];
+const KIN_NUM = ["speed", "tSpeed", "nextPick", "turn", "phase", "gaitEnd", "coastStart", "dashUntil", "gzNext", "gzLast", "beat", "omega", "steer", "yawRate", "wallSince", "pressLat", "pressY", "impact", "ram"];
 function makeFish(i, pl, prev, mates) {
   const f = newFish(i); initSpecies(f, pl.base, pl.key); F = f;
   { const sp = k => /goldfish/.test(k) ? "g" : "o", mixed = DISPLAY && new Set(Array.from({ length: NFISH }, (_, j) => sp(FLIST[j % FLIST.length]))).size > 1;
-    f.SZ = mixed && sp(pl.base) === "g" ? 1.2 : 1; ZOOM = ZG * f.SZ; }   // goldfish 1.2x when both species share the tank (betta unchanged; goldfish-only tank unchanged)
+    f.SZ = mixed && sp(pl.base) === "g" ? 1.2 : 1; f.UM = prev ? prev.UM : 1; f.UMt = prev ? prev.UMt : 1; ZOOM = ZG * f.SZ * umOf(f); }   // UM / UMt = the fish's own size multiplier (current / target; select-and-scale), carried over a rebuild   // goldfish 1.2x when both species share the tank (betta unchanged; goldfish-only tank unchanged)
   if (prev) {   // rebuild (quality / fins / species change): the fish keeps where it is and where it is going
     f.P.copy(prev.P); f.V.copy(prev.V); f.VEL.copy(prev.VEL); f.TGT.copy(prev.TGT);
     for (const k of KIN_NUM) f[k] = prev[k];
@@ -295,6 +394,15 @@ function spawn(f, mates) {   // fish 0 starts at the origin as always; the other
   }
   const a = Math.random() * Math.PI * 2; f.V.set(Math.cos(a), 0, Math.sin(a) * 0.3).normalize(); f.VEL.copy(f.V).multiplyScalar(0.9);
 }
+// split a mesh's triangles into [body, fin] draw groups: a triangle is "fin" when any vertex has _fin > 0 (the fin/tail sheets and their root rows). Returns false (no change) when there are none or no index.
+function finGroups(n) {
+  const g = n.geometry, fa = g.attributes._fin, ix = g.index; if (!fa || !ix) return false;
+  const a = ix.array, body = [], fin = [];
+  for (let i = 0; i < a.length; i += 3) { (fa.getX(a[i]) > 0 || fa.getX(a[i + 1]) > 0 || fa.getX(a[i + 2]) > 0 ? fin : body).push(a[i], a[i + 1], a[i + 2]); }
+  if (!fin.length) return false;
+  const out = new a.constructor(a.length); out.set(body, 0); out.set(fin, body.length);
+  g.setIndex(new THREE.BufferAttribute(out, 1)); g.clearGroups(); g.addGroup(0, body.length, 0); g.addGroup(body.length, fin.length, 1); return true;
+}
 function assemble(f, g) {
   F = f;
   const root = SkeletonUtils.clone(g.scene); F.root = root;
@@ -309,9 +417,17 @@ function assemble(f, g) {
   pivot.scale.setScalar(scl); F.corr.add(pivot);
   root.traverse(n => {
     if (n.isBone) { if (!n.userData.anat) F.bones.push(n); if (!n.userData.q0) n.userData.q0 = n.quaternion.clone(); }
-    if (n.isMesh && n.material) (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {
+    if (n.isMesh && n.material && !/^gill/.test(n.name)) (Array.isArray(n.material) ? n.material : [n.material]).forEach(m => {   // gill* nodes (betta-gills3d) keep their own vertex-colour material: no coat / roughness / fin overrides (r1 A6)
       m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.depthTest = true; m.side = THREE.DoubleSide;
-      if (TL > 0 && n.geometry && n.geometry.attributes._fin && !(n.geometry.attributes._part && (Q.get("partvis") === "1" || Q.get("anatvis") === "1"))) patchFin(m);
+      if (TL > 0 && n.geometry && n.geometry.attributes._fin && !(n.geometry.attributes._part && (Q.get("partvis") === "1" || Q.get("anatvis") === "1"))) {
+        if (QEFF !== "low" && FGM === "bl" && !FGN_OLD && TLMODE !== "hash" && !Array.isArray(n.material) && finGroups(n)) n.userData.blFin = true;
+        else patchFin(m);
+      }
+      if (n.geometry && n.geometry.attributes._depth && !(Q.get("partvis") === "1" || Q.get("anatvis") === "1") && !Array.isArray(n.material)) {   // R9 (betta-mouth2): lining darkens with the gape, gill cavity (_depth < 0) is dark
+        const U = { value: 0 }; m.userData.uOpenU = U; m.userData.uFlapU = { value: 0 }; m.customProgramCacheKey = () => "depth";
+        m.onBeforeCompile = sh => { sh.uniforms.uOpen = U; sh.uniforms.uFlap = m.userData.uFlapU;
+          sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float _depth;\nvarying float vDepth;").replace("#include <begin_vertex>", "#include <begin_vertex>\nvDepth = _depth;");
+          sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vDepth;\nuniform float uOpen;\nuniform float uFlap;").replace("#include <map_fragment>", "#include <map_fragment>\nfloat dd = vDepth < 0.0 ? 0.8 * uFlap : 0.8 * uOpen * vDepth; diffuseColor.rgb *= 1.0 - dd;"); }; }
       // glossy coat (Owner 2026-10-12: the goldfish's highlights look more natural): the betta file ships clearcoat 1 / roughness 0.04, a mirror coat
       // that only throws tiny hard glints with no environment. Softer, partial coat by default; ?cc= (0..1) ?ccr= (0..1) to tune.
       if (m.clearcoat !== undefined && (Q.has("cc") || F.PRE.cc != null)) { m.clearcoat = Q.has("cc") ? +Q.get("cc") : F.PRE.cc; m.clearcoatRoughness = Q.has("ccr") ? +Q.get("ccr") : (F.PRE.ccr != null ? F.PRE.ccr : m.clearcoatRoughness); }
@@ -322,6 +438,7 @@ function assemble(f, g) {
       m.needsUpdate = true;
     });
   });
+  root.traverse(n => { if (n.isMesh && n.userData.blFin && !Array.isArray(n.material)) { const m = n.material, fm = m.clone(); fm.side = THREE.DoubleSide; patchFin(fm); fm.needsUpdate = true; n.material = [m, fm]; } });   // fin triangles = draw group 1, blended (see finGroups)
   // tail-weight each bone by its REST position along the body (matches the school) so the wave whips the real tail, not array-order bones
   F.corr.updateMatrixWorld(true);
   const invRoot = new THREE.Matrix4().copy(root.matrixWorld).invert();
@@ -359,7 +476,7 @@ function disposeFish(f) {
 }
 // display-mode corner credit: one line per model on screen, fully visible for 4 s after load / a fish change, then fades over 1 s (CSS) and stays hidden
 const CREDIT_BETTA = '“Guppies” by dannzjs on Sketchfab, CC BY 4.0';
-const CREDIT_GOLD = '“Crimson Cascade red goldfish” by rt699448 on Sketchfab, CC BY 4.0 (simplified, rigged, fins rebuilt, mouth + gills cut here)';
+const CREDIT_GOLD = '“Crimson Cascade red goldfish” by rt699448 on Sketchfab, CC BY 4.0 (simplified, rigged, fins rebuilt, mouth + gills cut here; v2 includes mesh fixes: lip flips, mouth corners, gill sliver)';
 let creditT = 0;
 function creditShow() {
   const el = document.getElementById("credit"); if (!el) return;
@@ -425,6 +542,20 @@ document.getElementById("disp").onclick = () => {
   location.href = location.pathname + "?" + u;
 };
 document.getElementById("swim").onclick = e => { SWIM = !SWIM; e.target.textContent = "swim test: " + (SWIM ? "ON" : "OFF"); e.target.classList.toggle("on", SWIM); };
+// Settings-only keyboard submission and accessible toggle state; existing actions stay intact.
+if (!DISPLAY) {
+  const panel = document.getElementById("ui");
+  document.getElementById("advanced").append(document.getElementById("info"));
+  const syncPressed = () => panel.querySelectorAll("[data-q], [data-fish], #tlb, #clip, #proc, #swim").forEach(b => b.setAttribute("aria-pressed", b.classList.contains("on")));
+  syncPressed();
+  new MutationObserver(syncPressed).observe(panel, { subtree: true, attributes: true, attributeFilter: ["class"] });
+  panel.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault(); document.getElementById("disp").click();
+    }
+  });
+  panel.focus({ preventScroll: true });
+}
 let last = performance.now(), lastDt = 0;
 
 // ---- display mode: natural wander -------------------------------------------------------------
@@ -465,45 +596,63 @@ function updateGhost(t) {
   for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; c.push(...near[i], ...near[j], ...far[i], ...far[j], ...near[i], ...far[i]); }
   ghostGeo.setAttribute("position", new THREE.Float32BufferAttribute(c, 3));
 }
+// depth + lane preference (2026-10-12 polish, several fish only): fish i owns one of N depth lanes (interleaved so neighbours in the list get distant lanes) and, for non-wall targets, one of N horizontal bands (interleaved with the lanes)
+// (80 percent of the picks; the rest are free), so fish settle at different depths and screen heights and mostly cross each other at a bigger screen gap. One fish: the original uniform pick, same random stream. ?lanes=0 = off.
+const LANES = Q.get("lanes") !== "0";
 function pickTarget(t) {
-  const tz = TANK_FAR * 0.85 + Math.random() * (TANK_NEAR * 0.6 - TANK_FAR * 0.85), b = walls(tz);   // depth first, then the walls AT that depth
-  F.TGT.set((Math.random() * 2 - 1) * b.x * 0.95, (Math.random() * 2 - 1) * b.y * 0.85, tz);   // anywhere in the tank, edges included
+  const NF = FISH.length, laned = LANES && NF > 1, ZF = TANK_FAR * 0.85, ZN = TANK_NEAR * 0.6, ra = Math.random();
+  let tz = ZF + ra * (ZN - ZF);
+  if (laned) { const lane = NF % 5 ? (F.i * 5) % NF : F.i % NF; tz = clamp(ZF + (lane + 0.5 + (ra - 0.5) * 1.3) / NF * (ZN - ZF), ZF, ZN); }
+  const b = walls(tz), rx = Math.random(), r2 = Math.random();   // depth first, then the walls AT that depth
+  let ty = (r2 * 2 - 1) * b.y * 0.85;
+  if (laned && Math.random() < 0.8) { const band = NF % 3 ? (F.i * 3) % NF : F.i % NF; ty = ((band + 0.5) / NF * 2 - 1) * b.y * 0.85 + (r2 * 2 - 1) * b.y * 0.85 / NF * 1.1; }
+  F.TGT.set((rx * 2 - 1) * b.x * 0.95, ty, tz);   // anywhere in the tank, edges included
   F.wallTgt = Math.random() < 0.4;                          // ~40%: swim right up to a wall and brush along it
   if (F.wallTgt) { const wz = walls(F.TGT.z, _W2); if (Math.random() < 0.6) F.TGT.x = Math.sign(F.TGT.x || 1) * wz.x * 1.25; else F.TGT.y = Math.sign(F.TGT.y || 1) * wz.y * 1.25; F.nextPick = t + 9; }
-  F.tSpeed = (0.55 + Math.random() * 1.0) * F.SPEEDK;                   // dawdle ↔ cruise
-  F.nextPick = t + 5 + Math.random() * 7;
+  F.tSpeed = (0.55 + Math.random() * 1.0) * F.SPEEDK * F.G.spd;                   // dawdle ↔ cruise
+  F.nextPick = F.G.gz ? 1e9 : t + 5 + Math.random() * 7;   // (gaze-driven fish change their target only through gazeStep)
 }
 // soft mutual avoidance (2026-10-12 spacing fix): body-length based, full 3D. Desired gap between two fish centres = 0.6 x (half-length A + half-length B) + a margin (7.5% of the summed lengths);
 // inside 2 x gap every other fish adds a repulsion to the DESIRED heading (ramps up smoothly towards the gap, ~1.6 unit-aims at it, more inside) and, when it is ahead, asks for a slower swim (thrust scaled via F.sepSlow, eased).
 // A near head-on meeting also gets a sideways component (turn away from the side the other fish is on). Only intent + speed change: positions are never moved, so the steering inertia keeps the motion smooth. No effect with one fish.
-const _sd = new THREE.Vector3(), _sl = new THREE.Vector3(), SEP_K = 0.6, SEP_MARGIN = 0.075, SEP_RANGE = 2.0, SEP_SCR = 4, SEP_SCRGAP = 1.35, SEP_LOOK = 0;
+const _sd = new THREE.Vector3(), _sl = new THREE.Vector3(), SEP_K = 0.6, SEP_MARGIN = 0.075, SEP_RANGE = 2.0, SEP_SCR = 4, SEP_T = Q.has("sept") ? +Q.get("sept") : 1.5, SEP_Q1 = Q.has("sepq") ? +Q.get("sepq") : 1.8, SEP_BB = Q.has("sepbb") ? +Q.get("sepbb") : 1.15, SEP_BRK = Q.has("sepbrk") ? +Q.get("sepbrk") : 0.85, SEP_PITCH = Q.has("seppitch") ? +Q.get("seppitch") : 3;
 function separate(dt) {
   const LF = F.BODY_L * ZOOM; let slowT = 0, usMax = 0; F.sepAct = false;
   _sl.crossVectors(UPV, F.V).normalize();
   for (const o of FISH) {
     if (o === F) continue;
-    const Lo = o.BODY_L * ZG * o.SZ, gap = (SEP_K * 0.5 + SEP_MARGIN * 0.5) * (LF + Lo), R = SEP_RANGE * gap;
-    _sd.copy(F.P).sub(o.P); const d = _sd.length(); if (d >= R || d < 1e-4) continue;
-    const u = (R - d) / (R - gap), uc = u > 1 ? 1 : u, w = 2.5 * Math.pow(uc, 1.3) + (u > 1 ? 2.5 * (u - 1) : 0);   // 0 at R, 1.6 at the gap, steeper inside it
-    _sd.multiplyScalar(1 / d);                                           // unit vector away from the other fish (3D)
-    DES.addScaledVector(_sd, w);
-    const ahead = -_sd.dot(F.V);                                         // >0: the other fish is in front of me
-    // screen-space term: fish at different depths can still overlap on the picture. Project both onto the z=0 plane (perspective from the camera), and if their projected centres are
-    // closer than the projected gap, push apart in x/y only (depth stays free, so a fish can still pass in front of / behind another once the picture is clear)
-    const fF = CAM0 / (CAM0 - F.P.z), fO = CAM0 / (CAM0 - o.P.z), gs = SEP_SCRGAP * (SEP_K * 0.5 + SEP_MARGIN * 0.5) * (LF * fF + Lo * fO), Rs = SEP_RANGE * gs;
-    let sx = F.P.x * fF - o.P.x * fO, sy = F.P.y * fF - o.P.y * fO, ds = Math.hypot(sx, sy);
-    { const px = (F.P.x + F.VEL.x * SEP_LOOK) * fF - (o.P.x + o.VEL.x * SEP_LOOK) * fO, py = (F.P.y + F.VEL.y * SEP_LOOK) * fF - (o.P.y + o.VEL.y * SEP_LOOK) * fO, dp = Math.hypot(px, py);   // where we will be in SEP_LOOK s: react to a crossing early
-      if (dp < ds) { if (dp > 1e-4) { sx = px; sy = py; ds = dp; } else { ds = 1e-4; } } }
-    if (ds < Rs && ds > 1e-4) { const us = Math.min(1, (Rs - ds) / (Rs - gs)), kx = SEP_SCR * Math.pow(us, 1.3); const ww = walls(F.P.z, _W2);
-      const fx = sx > 0 === F.P.x > 0 ? clamp((ww.x - Math.abs(F.P.x) - 0.6 * LF) / (0.8 * LF), 0, 1) : 1, fy = sy > 0 === F.P.y > 0 ? clamp((ww.y - Math.abs(F.P.y) - 0.6 * LF) / (0.8 * LF), 0, 1) : 1;   // never push a fish INTO the glass it is already near
-      DES.x += sx / ds * kx * fx; DES.y += sy / ds * kx * fy; F.sepAct = true;
+    const Lo = o.BODY_L * ZG * o.SZ * umOf(o), gap = (SEP_K * 0.5 + SEP_MARGIN * 0.5) * (LF + Lo), R = SEP_RANGE * gap;
+    _sd.copy(F.P).sub(o.P); const d = _sd.length(); const near3 = d < R && d > 1e-4;   // (the screen-space term below runs for every pair, whatever the depth)
+    let uc = 0, w = 0, ahead = 0;
+    if (near3) {
+      const u = (R - d) / (R - gap); uc = u > 1 ? 1 : u; w = 2.5 * Math.pow(uc, 1.3) + (u > 1 ? 2.5 * (u - 1) : 0);   // 0 at R, 1.6 at the gap, steeper inside it
+      _sd.multiplyScalar(1 / d);                                         // unit vector away from the other fish (3D)
+      DES.addScaledVector(_sd, w);
+      ahead = -_sd.dot(F.V);                                             // >0: the other fish is in front of me
+    }
+    // screen-space term (2026-10-12 polish, predictive + bbox based): fish at different depths still overlap on the picture. Project both onto the z=0 plane (perspective from the camera), give each a
+    // heading-dependent half-extent box (long axis along the projected heading), predict the closest approach within SEP_T seconds from the projected velocities, and when the boxes (x SEP_BB) would
+    // overlap or come within SEP_Q1 of touching, steer apart in x/y only (depth stays free; a fish may still pass in front of / behind another once the picture is clear) and brake the one that is heading into the other.
+    const fF = CAM0 / (CAM0 - F.P.z), fO = CAM0 / (CAM0 - o.P.z), LsF = LF * fF, LsO = Lo * fO;
+    const sx = F.P.x * fF - o.P.x * fO, sy = F.P.y * fF - o.P.y * fO, ds = Math.hypot(sx, sy);
+    const vx = F.VEL.x * fF - o.VEL.x * fO, vy = F.VEL.y * fF - o.VEL.y * fO, vv = vx * vx + vy * vy, tc = vv > 1e-6 ? clamp(-(sx * vx + sy * vy) / vv, 0, SEP_T) : 0;
+    const cx = sx + vx * tc, cy = sy + vy * tc;
+    const bx = (0.3 + 0.6 * Math.abs(F.V.x)) * LsF * 0.5 + (0.3 + 0.6 * Math.abs(o.V.x)) * LsO * 0.5, by = (0.3 + 0.6 * Math.abs(F.V.y)) * LsF * 0.5 + (0.3 + 0.6 * Math.abs(o.V.y)) * LsO * 0.5;
+    const ex = bx * SEP_BB, ey = by * SEP_BB, q0 = Math.max(Math.abs(sx) / ex, Math.abs(sy) / ey), qc = Math.max(Math.abs(cx) / ex, Math.abs(cy) / ey), q = Math.min(q0, qc);
+    if (q < SEP_Q1 && ds > 1e-4) { const us = clamp((SEP_Q1 - q) / (SEP_Q1 - 1), 0, 1), kx = SEP_SCR * Math.pow(us, 1.3); const ww = walls(F.P.z, _W2);
+      let dx = cx / ex, dy = cy / ey; const dl = Math.hypot(dx, dy); if (dl > 1e-4) { dx /= dl; dy /= dl; } else { dx = sx / ds; dy = sy / ds; }
+      const fx = dx > 0 === F.P.x > 0 ? clamp((ww.x - Math.abs(F.P.x) - 0.6 * LF) / (0.8 * LF), 0, 1) : 1, fy = dy > 0 === F.P.y > 0 ? clamp((ww.y - Math.abs(F.P.y) - 0.6 * LF) / (0.8 * LF), 0, 1) : 1;   // never push a fish INTO the glass it is already near
+      DES.x += dx * kx * fx; DES.y += dy * kx * fy; F.sepAct = true;
       if (us > usMax) usMax = us;
-      const hl = Math.hypot(F.V.x, F.V.y);                              // my heading on the picture: if the other fish is in front of me there, brake and dodge sideways
-      if (hl < 0.5) slowT = Math.max(slowT, 0.7 * us * (1 - 2 * hl));   // heading mostly along the view axis (towards / away from the camera): about to cover the other fish on the picture -> ease off
+      // right of way: a hovering/gaze-driven fish (betta) keeps its place, otherwise the lower-numbered fish; the other one gives way = brakes when the two are closing on each other and the boxes would overlap,
+      // and waits (hovers) until the picture is clear. Only thrust changes; nothing is moved.
+      const yl = (F.G.gz ? 1000 : 0) - F.i < (o.G.gz ? 1000 : 0) - o.i;
+      if (yl && sx * vx + sy * vy < 0) slowT = Math.max(slowT, SEP_BRK * clamp((SEP_Q1 - qc) / (SEP_Q1 - 0.9), 0, 1));
+      const hl = Math.hypot(F.V.x, F.V.y);
+      if (hl < 0.5) slowT = Math.max(slowT, 0.5 * us * (1 - 2 * hl));   // heading mostly along the view axis (towards / away from the camera): about to cover the other fish on the picture -> ease off
       if (hl > 0.2) { const hx = F.V.x / hl, hy = F.V.y / hl, aS = -(sx * hx + sy * hy) / ds;
-        if (aS > 0) { slowT = Math.max(slowT, 0.7 * us * Math.min(1, aS * 1.5));
-          if (aS > 0.3) { const sd = -(sx * -hy + sy * hx) / ds, sg2 = Math.abs(sd) > 0.05 ? -Math.sign(sd) : (F.i % 2 ? 1 : -1), kk = SEP_SCR * Math.pow(us, 1.3) * (aS - 0.3) * 1.2; DES.x += -hy * sg2 * kk; DES.y += hx * sg2 * kk; } } } }
-    if (ahead > 0) {
+        if (aS > 0.3) { const sd = -(sx * -hy + sy * hx) / ds, sg2 = Math.abs(sd) > 0.05 ? -Math.sign(sd) : (F.i < o.i ? 1 : -1) * (hx >= 0 ? 1 : -1), kk = SEP_SCR * Math.pow(us, 1.3) * (aS - 0.3) * 1.2; DES.x += -hy * sg2 * kk; DES.y += hx * sg2 * kk; } } }
+    if (near3 && ahead > 0) {
       slowT = Math.max(slowT, 0.45 * uc * Math.min(1, ahead * 1.5));
       if (ahead > 0.6) { const side = -_sd.dot(_sl), sg = Math.abs(side) > 0.05 ? -Math.sign(side) : (F.i % 2 ? 1 : -1); DES.addScaledVector(_sl, sg * w * (ahead - 0.6) * 1.2); }   // head-on: dodge to the side
     }
@@ -512,11 +661,87 @@ function separate(dt) {
   if (F.atWall || Math.abs(F.PUSH.v) > 1e-4) slowT = 0;                  // never braked while pressed on the glass (the tail push-off would then dominate the speed)
   F.sepSlow += (slowT - F.sepSlow) * (1 - Math.exp(-dt / ((F.atWall || Math.abs(F.PUSH.v) > 1e-4) ? 0.06 : 0.3)));
 }
+// ---- BETTA FIN WORK (2026-10-14, Owner additions 2-4; wiki droidware-server/fish/betta-tail-hinge-fix) -----------------------------------------------------------------------------------------------------------------------------
+// The betta saves energy: while it COASTS (glide, not hovering) the pectorals rest and trail (no goldfish-style left-right-left-right pumping, the pelvics only waddle with the body) and steering is done with occasional single
+// ONE-SIDED flicks (one pectoral or pelvic stroke, >= 1 s apart, typically 1-3 s) fired when the heading / pitch error passes a threshold. Bursts, turns, hovering and wall contact keep the active alternating strokes (existing code).
+// A flick yaws the body (impulse on the yaw rate, opposite-side fin) or pitches it; the body follows the fin: pitch is a damped rotational system (rate eq. below) whose only torque is fin work, delayed by FWK.lead after the fin
+// activity rises (flick pulse starts at the lead; active strokes pass through a delay line), capped in angular acceleration; in a glide with the fins quiet the pitch only drifts slowly back toward level.
+// URL: bfw=0 restores the old continuous pumping + free pitch; fw_<knob>= overrides FWK (yawThr pitThr gap0 gap1 dur lead yawImp pitT0 kp c c2 amax drift coastYaw restX restSig pelAmp).
+const FWK = { yawThr: 0.12, pitThr: 0.087, gap0: 1.0, gap1: 3.0, dur: 0.42, lead: 0.2, yawImp: 1.3, pitT0: 0.33, kp: 3.0, c: 3.5, c2: 2.5, amax: 1.2, drift: 0.008, coastYaw: 0.25, restX: -0.3, restSig: 0.85, pelAmp: 0.5 };
+for (const k in FWK) if (Q.has("fw_" + k)) FWK[k] = +Q.get("fw_" + k);
+function fwInit() { return { A: 0, act: 0, hist: [], flick: null, nextOk: 1.5, log: [], pit: null, w: 0, tq: 0, yawK: 1, yawImp: 0, gate: 0, rng: 0x9e3779b9 ^ (F.i * 7919), pelF: { 1: 0, [-1]: 0 }, flickLogN: 0, flickX: { 1: null, [-1]: null }, acc: 0 }; }
+function fwRnd(FW) { let a = (FW.rng = (FW.rng + 0x6D2B79F5) | 0); let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }   // private stream: the main Math.random sequence (wander, targets) is untouched
+const fwHump = (u, a, b) => (u <= a || u >= b ? 0 : Math.sin(Math.PI * (u - a) / (b - a)));   // 0 outside [a,b], half-sine inside (integral over [a,b] = 2(b-a)/pi)
+function fwStep(dt, t, want) {
+  const FW = F.FW, K = FWK, S = F.AN.S;
+  if (FW.pit == null) FW.pit = Math.asin(clamp(F.V.y, -1, 1));
+  const active = (F.gait === "burst" && t < F.gaitEnd - 0.2) || F.hover || F.atWall || F.sepAct;   // (the last power stroke ends 0.2 s before the glide starts; a coasting betta does not flare into a braking pose either, it just rests)
+  FW.A += ((active ? (F.hover && F.gait !== "burst" ? 0.8 : 1) : 0) - FW.A) * (1 - Math.exp(-dt / (active ? 0.08 : 0.15)));   // active-stroke envelope: full activity back within ~0.3 s, off again within ~0.5 s
+  FW.yawK = active ? 1 : K.coastYaw; FW.yawImp = 0;
+  // pitch target and error (the aim DES.y, same limit as before)
+  const thT = Math.asin(clamp(DES.y, -0.5, 0.5)), ePit = thT - FW.pit;
+  // flick scheduling: coasting only, >= 1 s apart (1-3 s), when the heading or the pitch error is past its threshold
+  let fk = FW.flick;
+  if (fk && t - fk.t0 > K.lead + 0.55) { fk.done = true; FW.flick = fk = null; }   // (the fin stroke lasts K.dur, the body's torque pulse runs on until lead + 0.5 s)
+  if (!fk && !active && t >= FW.nextOk && Math.abs(F.yawRate) < 0.6) {   // (not while the body is still swinging round from a burst)
+    const yy = Math.abs(want) / K.yawThr, pp = Math.abs(ePit) / K.pitThr;
+    if (yy > 1 || pp > 1) {
+      const yaw = yy >= pp, dir = yaw ? Math.sign(want) : Math.sign(ePit), err = yaw ? Math.abs(want) : Math.abs(ePit), a = clamp(err / (yaw ? 0.5 : 0.2), 0.4, 1);
+      const side = yaw ? -dir : (fwRnd(FW) < 0.5 ? 1 : -1), pel = yaw ? fwRnd(FW) < 0.3 : fwRnd(FW) < 0.4;   // a yaw flick = the fin on the side OPPOSITE the turn strokes; a pitch flick = one pectoral (+ the pelvic on the same side sometimes)
+      fk = FW.flick = { t0: t, kind: yaw ? "yaw" : "pitch", dir, a, side, pel: pel && yaw ? "pelvic" : (pel ? "both" : "pectoral"), eYaw: want, ePit, done: false, psi0: Math.atan2(F.V.x, F.V.z), pit0: FW.pit };
+      FW.nextOk = t + K.gap0 + fwRnd(FW) * (K.gap1 - K.gap0); FW.flickLogN++;
+      FW.log.push({ t: +t.toFixed(3), kind: fk.kind, side: side > 0 ? "R(+x)" : "L(-x)", fin: fk.pel, a: +a.toFixed(2), errYawDeg: +(want / D2R).toFixed(1), errPitchDeg: +(ePit / D2R).toFixed(1), psi0: fk.psi0, pit0: fk.pit0 }); if (FW.log.length > 400) FW.log.shift();
+    }
+  }
+  FW.flickX[1] = FW.flickX[-1] = null; FW.pelF[1] = FW.pelF[-1] = 0; let fAct = 0, fTq = 0;
+  if (fk) {
+    const tf = t - fk.t0, u = tf / K.dur;
+    if (u < 1) { FW.flickX[fk.side] = { u, a: fk.a, pec: fk.pel !== "pelvic" }; fAct = fk.pel === "pelvic" ? 0.5 : fwHump(u, 0, 0.55) * fk.a;   // pectoral activity during the stroke
+      if (fk.pel !== "pectoral") FW.pelF[fk.side] = fwHump(u, 0.05, 0.75) * fk.a; }
+    if (fk.kind === "yaw") FW.yawImp = fk.dir * fk.a * K.yawImp * (Math.PI / 2 / 0.2) * fwHump(tf, 0.08, 0.28);   // integrates to fk.dir * a * yawImp (rad/s of yaw rate) over the power stroke; the caller divides by the mass
+    else fTq = fk.dir * fk.a * K.pitT0 * (Math.PI / 2 / 0.5) * fwHump(tf, K.lead, K.lead + 0.5);
+  }
+  // activity (pectoral) and its delayed copy = the gate of the pitch torque: the body only follows the fins by >= K.lead
+  FW.act = Math.max(FW.A, fAct); FW.hist.push(t, FW.act); while (FW.hist.length > 4 && FW.hist[2] <= t - K.lead) FW.hist.splice(0, 2);
+  FW.gate = FW.hist[1];   // the sample from (just before) t - lead
+  FW.tq = fTq + (active ? FW.gate * K.kp * ePit : 0); FW.ePit = ePit;
+}
+function fwPitch(dt) {
+  const FW = F.FW, K = FWK, lim = Math.asin(0.5);
+  const drift = -clamp(FW.pit / 10, -K.drift, K.drift) * (1 - FW.gate);   // fins quiet: only a slow drift back toward level
+  let a = FW.tq - K.c * (FW.w - drift) - K.c2 * Math.abs(FW.w) * FW.w; a = clamp(a, -K.amax, K.amax); FW.acc = a;
+  FW.w += a * dt; FW.pit += FW.w * dt; if (FW.pit > lim) { FW.pit = lim; FW.w = Math.min(FW.w, 0); } else if (FW.pit < -lim) { FW.pit = -lim; FW.w = Math.max(FW.w, 0); }
+  const hl = Math.hypot(F.V.x, F.V.z) || 1, cp = Math.cos(FW.pit); F.V.set(F.V.x / hl * cp, Math.sin(FW.pit), F.V.z / hl * cp);
+}
+// GAZE BURSTS (betta): every gzMin..gzMax s the fish decides to look somewhere else. 1) the eyes jump to the new direction (F.gz.I drives the eye saccade + gaze offset in anatStep) while the body still keeps its old heading;
+// 2) after gzLead s the new target is committed: the body turns (C-bend) and a short burst (dashBeats beats at dashOm, thrust speed dashV) carries it towards it; 3) it settles back into slow cruise / hover.
+function gazeStep(t, reached) {
+  const G = F.G;
+  if (!F.gzNext) F.gzNext = t + G.gzMin + Math.random() * (G.gzMax - G.gzMin);
+  if (reached && !F.gz && t - F.gzLast > G.gzMin * 0.6 && F.gzNext - t > 1.5) F.gzNext = t + 0.5 + Math.random();   // got where it was going: look elsewhere soon
+  if (!F.gz) {
+    if (t < F.gzNext) return;
+    if (F.wallTgt && !reached && t - F.gzLast < 1.5 * G.gzMax) return;   // still on its way to touch a wall: don't drop the plan early (slow swimmers would never get there)
+    const old = { tgt: F.TGT.clone(), ts: F.tSpeed, wt: F.wallTgt };
+    pickTarget(t); const nw = { tgt: F.TGT.clone(), ts: F.tSpeed, wt: F.wallTgt };
+    F.TGT.copy(old.tgt); F.tSpeed = old.ts; F.wallTgt = old.wt;                               // the body keeps its old plan for now
+    LAT.crossVectors(UPV, F.V).normalize(); _gd.copy(nw.tgt).sub(F.P).normalize();
+    F.gz = { nw, t0: t, I: clamp(Math.atan2(_gd.dot(LAT), _gd.dot(F.V)) / 1.1, -1, 1) };   // where the eyes look first
+    if (F.AN && F.AN.S) F.AN.S.eye.cool = 0;
+    return;
+  }
+  if (t - F.gz.t0 < G.gzLead) return;
+  const nw = F.gz.nw; F.TGT.copy(nw.tgt); F.tSpeed = nw.ts; F.wallTgt = nw.wt; F.gz = null; F.gzLast = t;
+  F.gzNext = t + G.gzMin + Math.random() * (G.gzMax - G.gzMin);
+  F.gait = "burst"; F.omega = 2 * Math.PI * G.dashOm * F.RATE / Math.sqrt(ZOOM); const dur = G.dashBeats * 2 * Math.PI / F.omega;
+  F.gaitEnd = t + dur; F.dashUntil = t + dur; F.coastStart = t;
+}
+const _gd = new THREE.Vector3();
 function wander(dt, t) {
   F.outer.scale.setScalar(ZOOM);   // (the zoom easing + ghost run once per frame in loop(): stepZoom)
   const M = Math.pow(ZOOM, 1.5);                        // mass grows with size: slower beats, more inertia, longer glides
   const reached = F.wallTgt ? (F.atWall && t - F.wallSince > 0.8) : F.P.distanceTo(F.TGT) < 0.9 * ZOOM;   // a wall target = touch the wall and brush it ~1s
-  if (reached || t > F.nextPick) pickTarget(t);
+  if (F.G.gz) gazeStep(t, reached); else if (reached || t > F.nextPick) pickTarget(t);
   DES.copy(F.TGT).sub(F.P).normalize();
   // walls: look ahead; near a wall, cancel the outward part of the aim and push gently inward
   // → the fish curves along the wall and brushes it instead of reversing in open water
@@ -547,12 +772,14 @@ function wander(dt, t) {
   const intent = clamp(want / 1.1, -1, 1); F.INTENT = intent;
   // gait: a wanted turn starts a stroke early (prep stroke); every glide lasts ≥0.4s
   if (F.gait === "coast" && (t > F.gaitEnd || ((Math.abs(intent) > 0.55 || Math.abs(F.V.z) > 0.7) && t > F.coastStart + 0.4))) {
-    F.gait = "burst"; F.omega = 2 * Math.PI * clamp(1.3 + 1.1 * F.tSpeed + 0.9 * Math.abs(intent), 1.5, 3.5) * F.RATE / Math.sqrt(ZOOM);   // 1.5–3.5 beats/s, slower for a bigger fish
-    F.gaitEnd = t + (2 + Math.floor(Math.random() * 3)) * (2 * Math.PI / F.omega);
+    F.gait = "burst"; F.hover = false; F.omega = 2 * Math.PI * clamp(F.G.omA + F.G.omS * F.tSpeed + F.G.omI * Math.abs(intent), F.G.omMin, F.G.omMax) * F.RATE / Math.sqrt(ZOOM);   // goldfish 1.5–3.5 beats/s, slower for a bigger fish
+    F.gaitEnd = t + (F.G.nb0 + Math.floor(Math.random() * F.G.nbR)) * (2 * Math.PI / F.omega);
   } else if (F.gait === "burst" && t > F.gaitEnd) {
-    F.gait = "coast"; F.coastStart = t; F.gaitEnd = t + F.GLIDE * (0.6 + Math.random() * (F.tSpeed < 0.9 ? 1.4 : 0.8));
+    F.gait = "coast"; F.hover = false; F.coastStart = t; F.gaitEnd = t + F.GLIDE * (F.G.gl0 + Math.random() * (F.tSpeed < 0.9 ? F.G.glA : F.G.glB)) * (t < F.dashUntil + 0.5 ? F.G.dashGlide : 1);
+    if (F.G.hvP > 0 && t > F.dashUntil + 0.5 && Math.random() < F.G.hvP) { F.gaitEnd = t + F.G.hvMin + Math.random() * (F.G.hvMax - F.G.hvMin); F.hover = true; }   // hover pause (fins only)
   }
-  F.beat += ((F.gait === "burst" ? 1 : 0.06) - F.beat) * (1 - Math.exp(-dt * (F.gait === "burst" ? 8 : 3.5)));
+  F.bk += ((t < F.dashUntil + 0.6 ? 1 : 0) - F.bk) * (1 - Math.exp(-dt * 3));   // 0 = cruising, 1 = gaze burst (full body bend)
+  F.beat += ((F.gait === "burst" ? 1 : F.G.beatC) - F.beat) * (1 - Math.exp(-dt * (F.gait === "burst" ? 8 : 3.5)));
   // body bend: LEADS with intent, then also holds while the body is still rotating
   // wall pressure joins in: the body curves AWAY from the glass (nose + tail away, mid-body riding along
   // it), up to ~1.8× the normal bend — flexing round the wall instead of being shoved off it rigidly
@@ -561,16 +788,17 @@ function wander(dt, t) {
   F.steer += (clamp(0.7 * intent + 0.3 * F.yawRate / 1.6 - 1.1 * F.pressLat - F.impact * (Math.sign(F.pressLat) || 1), -2.6, 2.6) - F.steer) * (1 - Math.exp(-dt * 11));
   // torque from the bent body (stronger while stroking; big reversals get a hard C-stroke) vs water damping
   const kick = 1 + 0.6 * clamp((Math.abs(want) - 1.4) / 1.2, 0, 1);
-  F.yawRate += (7.0 * F.steer * (0.35 + 0.65 * F.beat) * kick * (out ? 1.4 : 1) - 3.4 * F.yawRate) * dt / M;   // angular inertia ∝ mass
+  const FW = F.FW; if (FW) fwStep(dt, t, want);   // betta fin work (2026-10-14): activity envelope, one-sided flicks while coasting, yaw impulse
+  F.yawRate += (7.0 * F.steer * (0.35 + 0.65 * F.beat) * kick * (out ? 1.4 : 1) * (FW ? FW.yawK : 1) - 3.4 * F.yawRate + (FW ? FW.yawImp : 0)) * dt / M;   // angular inertia ∝ mass
   F.V.applyAxisAngle(UPV, F.yawRate * dt);                    // +yaw turns toward LAT (+X side)
-  F.V.y += (DES.y - F.V.y) * (1 - Math.exp(-dt * 1.2)); F.V.y = clamp(F.V.y, -0.5, 0.5); F.V.normalize();   // pitch: slow, no bend
+  if (FW) fwPitch(dt); else { F.V.y += (DES.y - F.V.y) * (1 - Math.exp(-dt * (F.sepAct ? SEP_PITCH : 1.2))); F.V.y = clamp(F.V.y, -0.5, 0.5); F.V.normalize(); }   // pitch: slow, no bend (betta: damped, fin-driven, see fwPitch)
   F.turn += (F.yawRate - F.turn) * (1 - Math.exp(-dt * 3));
 
   // ---- momentum: velocity is NOT the heading ------------------------------------------------------
   // forward = thrust (beating) vs drag; sideways slip decays (fins/body resist it) → the fish carries
   // its old line a little through a turn instead of pivoting on a rail
   const vf = F.VEL.dot(F.V);
-  const ts = F.tSpeed * Math.sqrt(ZOOM) * (1 - F.sepSlow);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
+  const ts = (t < F.dashUntil ? F.G.dashV : F.tSpeed) * Math.sqrt(ZOOM) * (1 - F.sepSlow);                   // a bigger fish swims a bit faster (body-lengths/s drop, like real fish)
   let nf = vf + (DRAG * ts * ts * F.beat - DRAG * vf * Math.abs(vf)) * dt * 1.6 / Math.sqrt(M);   // heavier → slower to speed up and to slow down (longer glides)
   nf = Math.max(nf, 0.12);
   LATV.copy(F.VEL).addScaledVector(F.V, -vf).multiplyScalar(Math.exp(-dt * 7));
@@ -589,9 +817,9 @@ function wander(dt, t) {
   if (F.atWall && !wasAtWall) F.wallSince = t;
   F.outer.position.copy(F.P);
   tmp.copy(F.P).add(F.V); F.outer.up.set(0, 1, 0); F.outer.lookAt(tmp);
-  F.outer.rotateZ(clamp(F.turn * 0.2, -0.3, 0.3));           // roll into the turn
+  F.outer.rotateZ(clamp(F.turn * 0.2, -0.3, 0.3) * (F.G.rollK + (1 - F.G.rollK) * F.bk));           // roll into the turn
   F.phase += dt * F.omega * (0.3 + 0.7 * F.beat);              // beat while stroking, slow residual while gliding
-  F.outer.rotateY(-Math.sin(F.phase) * 0.045 * F.beat);        // head recoil: the head yaws opposite the tail stroke
+  F.outer.rotateY(-Math.sin(F.phase) * 0.045 * F.beat * (F.G.rollK + (1 - F.G.rollK) * F.bk));        // head recoil: the head yaws opposite the tail stroke
 }
 // ---- whole-body wall contact (display) ----------------------------------------------------------
 // The tank walls are the screen edges (per depth). Every bone is tested — leaf bones extended by one
@@ -614,11 +842,12 @@ const HEADWALL = Q.get("headwall") !== "0", _ho = { l: 0, r: 0, t: 0, b: 0 };
 const _hv = new THREE.Vector3();
 function headSample() {
   if (F.HEADS) return F.HEADS;
-  let sm = null; F.outer.traverse(n => { if (n.isSkinnedMesh && (!sm || n.geometry.attributes.position.count > sm.geometry.attributes.position.count)) sm = n; });
+  let sm = null; F.outer.traverse(n => { if (n.isSkinnedMesh && !/^gill/.test(n.name) && (!sm || n.geometry.attributes.position.count > sm.geometry.attributes.position.count)) sm = n; });   // gill* nodes (betta-gills3d) are never the sampled body (r2 M-F); a no-op for every other model
   if (!sm) return { sm: null, idx: [] };   // model not loaded yet: don't cache
   const H0 = { sm, idx: [] };
   F.outer.updateMatrixWorld(true); sm.skeleton.update();
-  const n = sm.geometry.attributes.position.count, sc = new Float32Array(n), W = new Float32Array(n * 3), fw = F.V.clone().normalize(), up = new THREE.Vector3(0, 1, 0), lat = new THREE.Vector3().crossVectors(up, fw).normalize();
+  const G3 = sm.geometry.userData.gills3d;   // betta-gills3d: the 26 split twins are appended AFTER the original vertices; the scan keeps to the original count so the sampled set (and the wall response) is the one guppies.glb gets (r1 D2 / m6)
+  const n = G3 && G3.origVertexCount ? Math.min(G3.origVertexCount, sm.geometry.attributes.position.count) : sm.geometry.attributes.position.count, sc = new Float32Array(n), W = new Float32Array(n * 3), fw = F.V.clone().normalize(), up = new THREE.Vector3(0, 1, 0), lat = new THREE.Vector3().crossVectors(up, fw).normalize();
   let lo = 1e9, hi = -1e9;
   for (let i = 0; i < n; i++) { sm.getVertexPosition(i, _hv).applyMatrix4(sm.matrixWorld); W[i * 3] = _hv.x; W[i * 3 + 1] = _hv.y; W[i * 3 + 2] = _hv.z; sc[i] = _hv.dot(fw); if (sc[i] < lo) lo = sc[i]; if (sc[i] > hi) hi = sc[i]; }
   const cut = hi - 0.24 * (hi - lo), head = []; for (let i = 0; i < n; i++) if (sc[i] >= cut) head.push(i);
@@ -633,7 +862,8 @@ function headOver(out) {   // per-edge overshoot (world units at the vertex dept
   const H = headSample(); out.l = out.r = out.t = out.b = -1e9; if (!H.sm) return out;
   F.outer.updateMatrixWorld(true); H.sm.skeleton.update();
   for (const i of H.idx) { H.sm.getVertexPosition(i, _hv).applyMatrix4(H.sm.matrixWorld); const e = edgeAt(_hv.z);
-    out.r = Math.max(out.r, _hv.x - e.x); out.l = Math.max(out.l, -_hv.x - e.x); out.t = Math.max(out.t, _hv.y - e.y); out.b = Math.max(out.b, -_hv.y - e.y); }
+    const dr = _hv.x - e.x, dl = -_hv.x - e.x, dt = _hv.y - e.y, db = -_hv.y - e.y;
+    if (dr > out.r) { out.r = dr; out.ri = i; } if (dl > out.l) { out.l = dl; out.li = i; } if (dt > out.t) { out.t = dt; out.ti = i; } if (db > out.b) { out.b = db; out.bi = i; } }   // (same maxima as before; ri/li/ti/bi = the wall-nearest sample index per edge, recorded by __wtRec: r2 m-13)
   return out;
 }
 function wallCollide(cdt) {
@@ -707,7 +937,7 @@ function wallCollide(cdt) {
 const WALLSOFT = Q.get("wallsoft") !== "0", WALLK = Q.has("wallk") ? +Q.get("wallk") : 1.7, WALLMU = Q.has("wallmu") ? +Q.get("wallmu") : 1.5;   // soft wall contact of fin/tail rays (both fish): torque gain (×joint stiffness per unit of normalised depth), tangential friction
 const _wl = new THREE.Vector3(), _wn = new THREE.Vector3(), _wa = new THREE.Vector3();
 const IN_PLANE = 0.07, COUPLE = Q.has("couple") ? +Q.get("couple") : 30;   // rigged sheets: max in-plane bend per joint (rad), fan-coupling rate (1/s); the max cumulative bend per chain is F.CUM_BEND (per species)
-const _seg = new THREE.Vector3(), _qb = new THREE.Quaternion(), _qr = new THREE.Quaternion(), _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _qf = new THREE.Quaternion(), _qw = new THREE.Quaternion();
+const _tcs = new THREE.Vector3(), _tcw = new THREE.Vector3(), _tcq = new THREE.Quaternion(), _seg = new THREE.Vector3(), _qb = new THREE.Quaternion(), _qr = new THREE.Quaternion(), _ta = new THREE.Vector3(), _tb = new THREE.Vector3(), _u = new THREE.Vector3(), _ax = new THREE.Vector3(), _qf = new THREE.Quaternion(), _qw = new THREE.Quaternion();
 function spreadSign(ch) {   // + rotation about the chain's in-plane axis moves the tip away from the tail axis (spreading the veil)
   const M = new THREE.Vector3(0, 0, -1), perp = ch.dir.clone().addScaledVector(M, -ch.dir.dot(M)), mv = new THREE.Vector3().crossVectors(ch.nrm, ch.dir);
   return Math.sign(mv.dot(perp)) || 1;
@@ -743,12 +973,37 @@ function setupFins() {
     const tailV = tw > 0.72 && !Q.has("noveil");             // caudal veil: much softer, falling ~0.5× per joint toward the edge, low damping on the outer joints (gauze)
     const k = tailV ? (leaf ? 0.7 : 1) * 34 * AT("vk", 1) * Math.pow(AT("vdk", 0.55), d) : (leaf ? 20 : 42) / (1 + 0.35 * d) * (tailV ? 1 : AT("lfk", 1));              // stiff near the base, soft at the tips (lfk: betta flow only)
     const dorsalAnal = tw > 0.35 && tw < 0.7;
-    F.FINS.push({ bn, k, c: 2 * Math.sqrt(k) * (tailV ? AT("vz", 0.26) * (1 - 0.5 * d / 3) : 0.24 * AT("lfz", 1)), g: tailV ? AT("vg", 0.95) : AT("lg", 0.55), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5, tailV, mx: tailV ? AT("vmax", 1.5) : undefined, dd: d });
+    const pl = bn.userData.pelv;   // betta pelvic fin joint level (pelvicApply): drag-driven from the next joint, gain/stiffness profile root -> tip
+    const PG = pl == null ? null : [AT("pelvg0", 0.2), AT("pelvg1", 0.6), AT("pelvg2", 0.9)][pl], PK = pl == null ? 1 : [1, 0.55, 0.3][pl];
+    const BT = F.PRE.anat === "betta";   // betta caudal veil (2026-10-14): the three ray chains hang off different elbow joints (0.4-0.6 off the sheet), so a big swing (flow-2 allows 1.9 rad; ~70 deg in a hard turn) shears the lobes against each other = the V crease. Betta hard stop = vcap (0.65 rad, 37 deg: calm swimming reaches 45 deg in its top 10 %, so mostly hard turns are limited); ?vmax= still wins
+    F.FINS.push({ bn, k, c: 2 * Math.sqrt(k) * (tailV ? AT("vz", 0.26) * (1 - 0.5 * d / 3) : 0.24 * AT("lfz", 1)), g: tailV ? AT("vg", 0.95) : AT("lg", 0.55), th: new THREE.Vector3(), om: new THREE.Vector3(), prev: null, ripple: dorsalAnal ? 0.07 : 0, lag: d * 0.7 + tw * 2.5, tailV, mx: tailV ? (BT && !Q.has("vmax") ? AT("vcap", 0.65) : AT("vmax", 1.5)) : undefined, dd: d, tipB: pl != null && pl < 2 ? (bn.children.find(c => c.isBone) || null) : undefined });
+    if (PG != null) { const fo = F.FINS[F.FINS.length - 1]; fo.g = PG; fo.k *= PK; fo.c = 2 * Math.sqrt(fo.k) * AT("lfz", 1) * 0.24; }
   }
+}
+// apply one legacy fin bone's spring rotation + ripple / flutter (shared by the plain path and the betta caudal-veil path)
+function finApply(f, a, MXA) {
+  const bn = f.bn;
+  if (a > 1e-5) { _qf.setFromAxisAngle(_tb.copy(f.th).normalize(), Math.min(a, MXA)); bn.quaternion.multiply(_qf); }
+  if (f.ripple) rotBone(bn, Math.sin(F.phase - f.lag) * f.ripple * (0.4 + 0.6 * F.beat));   // travelling ripple, lagging the body wave
+  if (f.tailV) rotBone(bn, Math.sin(F.phase - f.lag) * AT("vrip", 0.06) * (0.3 + 0.7 * F.beat) + AT("vfl", 0.05) * (0.2 + clamp(F.speed, 0, 2)) * Math.min(1, f.dd / 2) * wrnd(performance.now() / 1000 + 0.07 * f.lag, f.lag * 5));   // veil: travelling ripple base→edge + fine speed-scaled flutter on the free edge
+}
+// BETTA CAUDAL VEIL FAN COUPLING (2026-10-14 tail hinge): the three ray chains (040/041, 042/043, 044/045) used to swing on their own about three different axes (up to ~70 deg at the leaf joints in a hard turn), which folds the fin sheet along the
+// rays (the V crease). Per joint level (root / leaf) the spring state (rotation vector th and angular velocity om, taken to the world frame) is pulled toward the mean of the level by F.TCPL (0 = independent as before, 1 = one rigid fan);
+// the fin still moves only through its own soft drag springs, they just agree with each other. URL: tcpl (default 0.85), 0 = old.
+function tailCouple(L) {
+  const kc = F.TCPL;
+  for (let lv = 0; lv < 4; lv++) {
+    let n = 0; _tcs.set(0, 0, 0); for (const f of L) if (f.dd === lv) { f.bn.getWorldQuaternion(_tcq); _tcw.copy(f.th).applyQuaternion(_tcq); _tcs.add(_tcw); n++; }
+    if (n > 1) { _tcs.divideScalar(n); for (const f of L) if (f.dd === lv) { f.bn.getWorldQuaternion(_tcq); _tcw.copy(f.th).applyQuaternion(_tcq); _tcw.lerp(_tcs, kc); f.th.copy(_tcw).applyQuaternion(_tcq.invert()); } }
+    n = 0; _tcs.set(0, 0, 0); for (const f of L) if (f.dd === lv) { f.bn.getWorldQuaternion(_tcq); _tcw.copy(f.om).applyQuaternion(_tcq); _tcs.add(_tcw); n++; }
+    if (n > 1) { _tcs.divideScalar(n); for (const f of L) if (f.dd === lv) { f.bn.getWorldQuaternion(_tcq); _tcw.copy(f.om).applyQuaternion(_tcq); _tcw.lerp(_tcs, kc); f.om.copy(_tcw).applyQuaternion(_tcq.invert()); } }
+  }
+  for (const f of L) { const a = f.th.length(); finApply(f, a, f.mx || 1.1); }
 }
 function finStep(dt) {
   if (!F.FINS.length || dt <= 0) return;
   F.outer.updateMatrixWorld(true);
+  let TLV = null;
   const Lw = F.BODY_L * ZOOM;
   for (const f of F.FINS) {
     const bn = f.bn; if (f.tipB) f.tipB.getWorldPosition(_ta); else tipOf(bn, _ta);
@@ -787,10 +1042,10 @@ function finStep(dt) {
     }
     const MXA = f.mx || 1.1, a = f.th.length(); if (!f.rig) if (a > MXA) { POP.finClamp = Math.max(POP.finClamp, a - MXA); f.th.multiplyScalar(MXA / a); f.om.multiplyScalar(0.5); }   // safety only
     if (f.rig) continue;                                   // rigged: coupled, clamped and applied below
-    if (a > 1e-5) { _qf.setFromAxisAngle(_tb.copy(f.th).normalize(), Math.min(a, MXA)); bn.quaternion.multiply(_qf); }
-    if (f.ripple) rotBone(bn, Math.sin(F.phase - f.lag) * f.ripple * (0.4 + 0.6 * F.beat));   // travelling ripple, lagging the body wave
-    if (f.tailV) rotBone(bn, Math.sin(F.phase - f.lag) * AT("vrip", 0.06) * (0.3 + 0.7 * F.beat) + AT("vfl", 0.05) * (0.2 + clamp(F.speed, 0, 2)) * Math.min(1, f.dd / 2) * wrnd(performance.now() / 1000 + 0.07 * f.lag, f.lag * 5));   // veil: travelling ripple base→edge + fine speed-scaled flutter on the free edge
+    if (F.TCPL && f.tailV) { (TLV || (TLV = [])).push(f); continue; }   // betta caudal veil (2026-10-14): fan-coupled, applied together after this loop
+    finApply(f, a, MXA);
   }
+  if (TLV) tailCouple(TLV);
   if (!F.RIG) return;
   // rigged tail/fins, pass 2: (a) fan coupling — each tail chain's across-sheet bend is pulled toward its neighbours' at the same joint level, so lobes spread/fold together and can't cross;
   // (b) cumulative root→tip bend per chain capped (CUM_BEND); (c) apply bend (across-sheet about rl, in-plane about nl) + a small out-of-plane flutter. No rotation about the chain axis anywhere.
@@ -866,6 +1121,21 @@ function rigGoldfish(root) {
   const p = new V3(), v = new V3(), cand = []; const sz = GF.spineZ, nSp = sz.length;
   const addChain = (ch, w) => { v.copy(p).sub(ch.root); const t = clamp(v.dot(ch.dir) / ch.len, 0, 1), u = t * ch.n, i0 = Math.min(Math.floor(u), ch.n - 1), f = u - i0;
     if (i0 >= ch.n - 1) cand.push([ch.ids[ch.n - 1], w]); else { cand.push([ch.ids[i0], w * (1 - f)]); cand.push([ch.ids[i0 + 1], w * f]); } };
+  // ---- dorsal skin-weight smoothing (2026-10-14, droidware-server/fish/goldfish-dorsal-step-fix) ----
+  // The dorsal fin showed a hard step crease when it waggled. Root cause, in the weights (frame-traced): (a) only the two strongest ray chains were kept per vertex, so the runner-up flipped on every
+  // ray axis (vertical creases, ~0.23 weight dropped); (b) the web aft of the last ray went from 100 % ray to 100 % spine within one edge (s = 1 when r1 > 0.04, rho > 1.25; 0.97 jump = the fold at the rear
+  // lobe); (c) more than 4 influences were cut hard. Fix: for vertices that already carry dorsal weight (or would: the rear lobe) the ray share is a smooth field, the chain split uses ALL dorsal chains,
+  // the rear lobe fades from the last ray into the spine over a band 0.15 wide (22 % of the fin's 0.67 extent; the old step was at 0.09), the fin-root gate is wider (rho 1.0 -> 1.5, was 1.35) and the
+  // 4-influence cut is continuous (the 5th weight is subtracted, then renormalised). WEIGHTS ONLY: bones, wave, springs and the bookkeeping below (region, chain share, sheet normals -> bone axes)
+  // still come from the OLD values; vertices with no dorsal weight before or after keep their old weights exactly.
+  const dch = chains.filter(c => c.group === "dorsal").sort((a, b) => a.k - b.k), ndc = dch.length, hasPart = !!geo.attributes._part;
+  const DSK = { gw: 1.5, ro0: 1.15, ro1: 1.30, fa: 0.09, fb: 0.20, q0: 0.03, q1: 0.18, b0: -0.02, b1: 0.03, pit: 0.03, eps: 1e-3, comp: 0.05, dmax: 0.25 };
+  const isDb = new Uint8Array(defs.length), isOb = new Uint8Array(defs.length);
+  for (const c of dch) for (const id of c.ids) isDb[id] = 1;
+  defs.forEach((d, k) => { isOb[k] = d.role !== "spine" && !isDb[k] ? 1 : 0; });   // "other" bones (tail, anal, pectoral): vertices they own are left alone
+  const aftN = ndc ? new V3(0, dch[ndc - 1].dir.z, -dch[ndc - 1].dir.y).normalize() : null;   // in-plane normal of the last ray, pointing aft
+  const dD = new Float64Array(ndc), dT = new Float64Array(ndc), dG = new Float64Array(ndc), dP = new Float64Array(ndc), dq = new V3(), dc = [];
+  const dadd = (b, w) => { if (w <= 0) return; for (const e of dc) if (e[0] === b) { e[1] += w; return; } dc.push([b, w]); };
   for (let i = 0; i < nV; i++) {
     p.fromBufferAttribute(pa, i);
     const rho = Math.hypot(p.x / lerpT(GF.body.a, p.z), (p.y - lerpT(GF.body.yc, p.z)) / lerpT(GF.body.b, p.z));
@@ -890,6 +1160,40 @@ function rigGoldfish(root) {
     if (s > 0 && c1 >= 0) { const tot = r1 + r2; addChain(chains[c1], s * r1 / tot); if (c2 >= 0 && r2 > 0) addChain(chains[c2], s * r2 / tot); }
     cand.sort((a, b) => b[1] - a[1]); let sum = 0; const m = Math.min(4, cand.length); for (let k = 0; k < m; k++) sum += cand[k][1];
     for (let k = 0; k < m; k++) { idx[i * 4 + k] = cand[k][0]; wts[i * 4 + k] = cand[k][1] / sum; }
+    if (ndc && rho > 1.0) {   // dorsal smoothing: replaces only the final influences (idx/wts) of dorsal-fin vertices (see the block above the loop)
+      let wo = 0, wd0 = 0; for (let k = 0; k < 4; k++) { const b = idx[i * 4 + k], w = wts[i * 4 + k]; if (isOb[b]) wo += w; if (isDb[b]) wd0 += w; }
+      if (wo <= DSK.comp) {
+        let dmin = 1e9, gs = 0;
+        for (let k = 0; k < ndc; k++) { const ch = dch[k]; v.copy(p).sub(ch.root); const t = clamp(v.dot(ch.dir) / ch.len, 0, 1); v.addScaledVector(ch.dir, -t * ch.len); const d = v.length(); dD[k] = d; dT[k] = t; if (d < dmin) dmin = d; dG[k] = Math.exp(-((d / dch[0].sigma) ** 2)); gs += dG[k]; }
+        if (dmin < DSK.dmax) {
+          const q = dq.copy(p).sub(dch[ndc - 1].root).dot(aftN), G = ss(1.0, DSK.gw, rho), beta = ss(DSK.b0, DSK.b1, q);
+          const Pl = (1 - beta) * (1 - ss(DSK.fa, DSK.fb, dmin)) + beta * (1 - ss(DSK.q0, DSK.q1, q));   // plateau out to the old reach (0.09) away from the rear lobe; the rear lobe fades over q 0.03 -> 0.18 aft of the last ray
+          const S = Math.max(Math.min(1, G * gs), ss(DSK.ro0, DSK.ro1, rho) * Pl);   // ray share
+          if (S >= DSK.eps || wd0 >= DSK.eps) {
+            let ps = 0; for (let k = 0; k < ndc; k++) { dP[k] = Math.max(0, dG[k] / gs - DSK.pit); ps += dP[k]; }
+            if (ps < 1e-9) { ps = 0; for (let k = 0; k < ndc; k++) { dP[k] = dG[k] / gs; ps += dP[k]; } }
+            dc.length = 0;
+            if (S < 1) {   // spine remainder (same z interpolation and head ease-in as above)
+              const hr = hasPart ? ss(0.40, 0.50, p.z) : 0, w = (1 - S) * (1 - hr);
+              if (hr > 0) dadd(sp[0], (1 - S) * hr);
+              if (p.z >= sz[0]) dadd(sp[0], w); else if (p.z <= sz[nSp - 1]) dadd(sp[nSp - 1], w);
+              else for (let k = 0; k < nSp - 1; k++) if (p.z <= sz[k] && p.z >= sz[k + 1]) { const f = (sz[k] - p.z) / (sz[k] - sz[k + 1]); dadd(sp[k], w * (1 - f)); dadd(sp[k + 1], w * f); break; }
+            }
+            if (S > 0) for (let k = 0; k < ndc; k++) {   // ALL dorsal chains, split along each chain between the two nearest joints
+              if (dP[k] <= 0) continue; const ch = dch[k], wc = S * dP[k] / ps, u = dT[k] * ch.n, i0 = Math.min(Math.floor(u), ch.n - 1), f = u - i0;
+              if (i0 >= ch.n - 1) dadd(ch.ids[ch.n - 1], wc); else { dadd(ch.ids[i0], wc * (1 - f)); dadd(ch.ids[i0 + 1], wc * f); }
+            }
+            dc.sort((a, b) => b[1] - a[1]);
+            const m4 = Math.min(4, dc.length), tau = dc.length > 4 ? dc[4][1] : 0; let tot = 0;
+            for (let k = 0; k < m4; k++) tot += Math.max(0, dc[k][1] - tau);
+            const soft = tot >= 1e-6; if (!soft) { tot = 0; for (let k = 0; k < m4; k++) tot += dc[k][1]; }   // continuous cut to 4 influences (hard cut only in the degenerate case)
+            let wd1 = 0; for (let k = 0; k < m4; k++) if (isDb[dc[k][0]]) wd1 += (soft ? Math.max(0, dc[k][1] - tau) : dc[k][1]) / tot;
+            if (wd0 >= DSK.eps || wd1 >= DSK.eps)   // a vertex with no dorsal weight before AND after keeps its old weights exactly
+              for (let k = 0; k < 4; k++) { if (k < m4) { idx[i * 4 + k] = dc[k][0]; wts[i * 4 + k] = (soft ? Math.max(0, dc[k][1] - tau) : dc[k][1]) / tot; } else { idx[i * 4 + k] = 0; wts[i * 4 + k] = 0; } }
+          }
+        }
+      }
+    }
     if (s > 0 && c1 >= 0) {   // chain bookkeeping: dominant chain share, and the weighted normal covariance (→ the sheet normal = ripple direction)
       region[i] = s > 0.5 ? (chains[c1].kind === "tail" ? 1 : 2) : 0;
       const nx = na.getX(i), ny = na.getY(i), nz = na.getZ(i), w1 = s * r1 / (r1 + r2), ch = chains[c1]; ch.share += w1;
@@ -1019,6 +1323,7 @@ function partVis(sm) {
 // bone parts: 1 premax, 2 jaw, 3 maxR, 4 maxL, 5 opR, 6 opL, 7 brR, 8 brL.  Landmarks (pivots) come from geometry.userData.mouthRig, written by work-goldfish/mouth/build_mouth.py: never retype them here.
 function mouthBones(sm, head, nb, ops, MR) {
   const V3 = THREE.Vector3, at = a => new V3(...a), g = sm.geometry, pt = g.attributes._part, wg = g.attributes._wgt;
+  const headIndex = sm.skeleton.bones.indexOf(head), legacyGill = new Set(MR.legacyHeadJoints || MR.legacyGillJoints || []), oldSI = g.attributes.skinIndex, oldSW = g.attributes.skinWeight;
   const jaw = mkBone("jaw", head, at(MR.J), "jaw", { skipWall: true, rigTw: 0.03 });
   const premax = mkBone("premax", head, at(MR.P), "premax", { skipWall: true, rigTw: 0.03 });
   const mx = {}, op = {}, br = {};
@@ -1033,34 +1338,72 @@ function mouthBones(sm, head, nb, ops, MR) {
   const dloc = at(MR.d).applyQuaternion(hq.clone().invert());
   const B = [null, premax, jaw, mx.R, mx.L, op.R, op.L, br.R, br.L];
   ops.unshift({ set: i => {
-    const p0 = pt.getX(i), p1 = pt.getY(i), w0 = wg.getX(i), w1 = wg.getY(i); if (w0 + w1 <= 1e-6) return null;   // C5: no mouth weight -> default rig weighting
-    const r = []; if (p0 && w0 > 0) r.push([B[p0], w0]); if (p1 && w1 > 0) r.push([B[p1], w1]); const rest = 1 - w0 - w1; if (rest > 1e-6) r.push([0, rest]); return r; } });
+    const p0 = pt.getX(i), p1 = pt.getY(i), w0 = wg.getX(i), w1 = wg.getY(i); if (w0 + w1 <= 1e-6) {
+      if (pt.getZ(i) > 0) return [[headIndex, 1]]; // fixed cavity lining follows this species' head
+      if (legacyGill.size) { const r = []; let changed = false;
+        for (let k = 0; k < 4; k++) { const j = oldSI.getComponent(i, k), w = oldSW.getComponent(i, k); if (w > 0) { const fixed = legacyGill.has(j); changed ||= fixed; r.push([fixed ? headIndex : j, w]); } }
+        if (changed) return r; // old operculum bones yield to the real cut/flap rig
+      }
+      return null;
+    }
+    const r = []; if (p0 && w0 > 0) r.push([B[p0], w0]); if (p1 && w1 > 0) r.push([B[p1], w1]); const rest = 1 - w0 - w1; if (rest > 1e-6) r.push([headIndex, rest]); return r; } });
   F.AN.jaw = { bone: jaw };
-  F.AN.mouth = { rig: MR, jaw, premax, mx: [mx.R, mx.L], op: [op.R, op.L], br: [br.R, br.L], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "" };
+  F.AN.mouth = { rig: MR, mesh: sm, lengthScale: MR.species === "betta" ? MR.ED / 0.09 : 1, jaw, premax, mx: [mx.R, mx.L], op: [op.R, op.L], br: [br.R, br.L], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "" };
+}
+// ---- betta v2 rig (betta-mouth2.glb; plan droidware-server/fish/betta-mouth-v2-plan Rev 4): 4 bones. jaw = lower-jaw hinge at MR.J about root x; premax = upper-lip band, moves along MR.d; opR/opL = flap abduction about the axis H0->H1.
+//   _PART ids: 1 premax, 2 jaw, 5 opR, 6 opL. Part weights replace the vertex's old weights outright; surface class > 0 or a vertex without parts keeps the head (legacyHeadJoints -> head). No landmark is computed on the page: everything is read from mouthRig.
+const GOLDFISH_LEVELS = { breathe: { jaw: 5, op: 6, br: 3 }, gulp: { jaw: 25, premax: 0.02, op: 10, br: 8 }, yawn: { jaw: 30, premax: 0.03, op: 10, br: 8 }, prot: { premax: 0.012 }, cough: { op: 10 } };   // today's goldfish literals (the goldfish trace stays identical)
+function mouthBonesBetta2(sm, head, nb, ops, MR) {
+  const V3 = THREE.Vector3, at = a => new V3(...a), g = sm.geometry, pt = g.attributes._part, wg = g.attributes._wgt;
+  const headIndex = sm.skeleton.bones.indexOf(head), legacy = new Set(MR.legacyHeadJoints || []), oldSI = g.attributes.skinIndex, oldSW = g.attributes.skinWeight;
+  const hJ = Q.get("debug") === "1" && Q.has("hinge") ? Q.get("hinge").split(",").map(Number) : MR.J;   // debug only: ?hinge=y,z-style override "x,y,z" (hinge candidate A vs B pictures)
+  const jaw = mkBone("jaw", head, at(hJ), "jaw", { skipWall: true, rigTw: 0.03 }), premax = mkBone("premax", head, at(MR.P), "premax", { skipWall: true, rigTw: 0.03 }), op = {};
+  for (const [sg, k] of [[1, "R"], [-1, "L"]]) {
+    op[k] = mkBone("op" + k, head, at(MR.H0[k]), "op", { side: sg, skipWall: true, rigTw: 0.03 });
+    const ax = at(MR.H1[k]).sub(at(MR.H0[k])).normalize(); if (sg < 0) ax.negate();   // +theta moves the (posterior) rim outward: +x on the right, -x on the left
+    op[k].userData.ax[1] = ax; F.AN.ops.push({ bone: op[k], side: sg });
+  }
+  nb.push(jaw, premax, op.R, op.L);
+  head.updateWorldMatrix(true, false); const hq = new THREE.Quaternion(); head.getWorldQuaternion(hq); const dloc = at(MR.d).applyQuaternion(hq.clone().invert());
+  const B = [null, premax, jaw, null, null, op.R, op.L];
+  ops.unshift({ set: i => {
+    const p0 = pt.getX(i), p1 = pt.getY(i), w0 = wg.getX(i), w1 = wg.getY(i);
+    if (w0 + w1 <= 1e-6) {
+      if (pt.getZ(i) > 0) return [[headIndex, 1]];   // lining + gill cavity: fixed to the head
+      const r = []; let changed = false;
+      for (let k = 0; k < 4; k++) { const j = oldSI.getComponent(i, k), w = oldSW.getComponent(i, k); if (w > 0) { const fixed = legacy.has(j); changed ||= fixed; r.push([fixed ? headIndex : j, w]); } }
+      return changed ? r : null;   // the artist's jaw/gill bones yield to the new rig (the clip stays untouched)
+    }
+    const r = []; if (p0 && w0 > 0) r.push([B[p0], w0]); if (p1 && w1 > 0) r.push([B[p1], w1]); const rest = 1 - w0 - w1; if (rest > 1e-6) r.push([headIndex, rest]); return r; } });
+  F.AN.jaw = { bone: jaw };
+  const LV = JSON.parse(JSON.stringify(MR.levels)); if (Q.has("jaw")) LV.breathe.jaw = +Q.get("jaw"); if (Q.has("gill")) LV.breathe.op = +Q.get("gill");   // URL jaw/gill override levels.breathe
+  F.AN.mouth = { rig: MR, mesh: sm, lengthScale: 1, jaw, premax, mx: [], op: [op.R, op.L], br: [], dloc, force: null, eventsOn: true, act: null, due: null, supp: 0, prevTh: 0, cur: { jaw: 0, premax: 0, op: 0, br: 0 }, evn: "", levels: LV, v2: true };
 }
 const mpulse = x => { x = ((x % 1) + 1) % 1; return x < 0.35 ? ss01(0, 0.35, x) : (x < 0.85 ? 1 - ss01(0.35, 0.85, x) : 0); };   // breathing pulse over one cycle
-function mouthEvent(kind, u) {   // event profile at u = t/T in [0,1] -> { jaw (deg), premax (units), op (deg), br (deg) }
+function mouthEvent(kind, u, LV) {   // event profile at u = t/T in [0,1] -> { jaw (deg), premax (units), op (deg), br (deg) }; LV = per-model levels (betta v2), default GOLDFISH_LEVELS
+  const G = LV || GOLDFISH_LEVELS;
   const sn2 = x => Math.pow(Math.sin(Math.PI * x), 2);
   if (kind === "gulp" || kind === "yawn") {
-    const JP = kind === "yawn" ? 30 : 25, PP = kind === "yawn" ? 0.03 : 0.02;
+    const LK = kind === "yawn" ? G.yawn : G.gulp, JP = LK.jaw, PP = LK.premax;
     const jaw = u < 0.35 ? JP * (1 - Math.pow(1 - u / 0.35, 2)) : u < 0.45 ? JP : u < 0.85 ? JP * (1 - ss01(0.45, 0.85, u)) : 0;
     const pm = u < 0.25 ? 0 : u < 0.85 ? PP * ss01(0.25, 0.55, u) : PP * (1 - ss01(0.85, 1.0, u));
     const gb = u < 0.45 ? 0.5 * u / 0.45 : 0.5 + 0.5 * (u - 0.45) / 0.55;
-    return { jaw, premax: pm, op: 10 * sn2(u), br: 8 * sn2(gb) };
+    return { jaw, premax: pm, op: LK.op * sn2(u), br: (LK.br || 0) * sn2(gb) };
   }
-  if (kind === "prot") return { jaw: 0, premax: 0.012 * sn2(u), op: 0, br: 0 };
-  if (kind === "cough") { const t = u * 0.27; return { jaw: 0, premax: 0, op: 10 * (t < 0.12 ? ss01(0, 0.12, t) : 1 - ss01(0.12, 0.27, t)), br: 0 }; }
+  if (kind === "prot") return { jaw: 0, premax: (G.prot ? G.prot.premax : G.gulp.premax) * sn2(u), op: 0, br: 0 };   // v2: no prot/cough entries in its levels -> bounded by the gulp level
+  if (kind === "cough") { const t = u * 0.27; return { jaw: 0, premax: 0, op: (G.cough ? G.cough.op : G.gulp.op) * (t < 0.12 ? ss01(0, 0.12, t) : 1 - ss01(0.12, 0.27, t)), br: 0 }; }
   return { jaw: 0, premax: 0, op: 0, br: 0 };
 }
 const MEV = { gulp: { T: 0.6 }, yawn: { T: 1.2 }, prot: { T: 0.25 }, cough: { T: 0.27 } };
 function mouthApply(v) {
   const M = F.AN.mouth; if (!M) return;
   rotAx(M.jaw, 0, v.jaw * D2R);
-  M.premax.position.copy(M.premax.userData.p0).addScaledVector(M.dloc, v.premax);
+  M.premax.position.copy(M.premax.userData.p0).addScaledVector(M.dloc, v.premax * M.lengthScale);
   const m = Math.min(20, 0.5 * v.jaw + 400 * v.premax) * D2R; for (const b of M.mx) rotAx(b, 0, m);
   for (const b of M.op) rotAx(b, 1, v.op * D2R);
   for (const b of M.br) rotAx(b, 2, v.br * D2R);
   const c = M.cur; c.jaw = v.jaw; c.premax = v.premax; c.op = v.op; c.br = v.br;
+  if (M.levels && M.mesh.material && M.mesh.material.userData.uOpenU) { M.mesh.material.userData.uOpenU.value = clamp(v.jaw / M.levels.yawn.jaw, 0, 1); M.mesh.material.userData.uFlapU.value = clamp(v.op / M.levels.yawn.op, 0, 1); }   // R9 + Rev 5: the lining darkens with the gape, the gill cavity with the flap opening (uFlap = op angle / yawn op; both sides share one angle)
 }
 function mouthPose() { const M = F.AN.mouth; mouthApply(M.force || { jaw: 0, premax: 0, op: 0, br: 0 }); }
 const rnd = (a, b) => a + (b - a) * Math.random();
@@ -1077,20 +1420,20 @@ function mouthStep(S, dt, t) {
     if (M.act) {
       const A = M.act, T = MEV[A.kind].T, u = (t - A.t0) / T;
       if (u >= 1) {
-        if (A.kind === "prot" && A.n > 1) { A.n--; A.t0 = t; v = mouthEvent("prot", 0); }
+        if (A.kind === "prot" && A.n > 1) { A.n--; A.t0 = t; v = mouthEvent("prot", 0, M.levels); }
         else {
           const k = A.kind; M.act = null; const rate = Math.max(S.rate, 30) / 60;
           if (k === "gulp" || k === "yawn") M.supp = t + 1 / rate;
           if (M.due[k] != null) M.due[k] = t + (k === "gulp" ? (S.eff > 0.5 ? rnd(6, 15) : rnd(8, 25)) : k === "prot" ? rnd(4, 12) : k === "yawn" ? rnd(60, 180) : rnd(40, 80));
           v = null;
         }
-      } else v = mouthEvent(A.kind, u);
+      } else v = mouthEvent(A.kind, u, M.levels);
       if (M.act) name = A.kind;
     }
     if (!v) {   // breathing (suppressed for one cycle after a gulp/yawn)
       const k = t < M.supp ? 0 : 1;
-      const jamp = 5 + 1.0 * S.eff, oamp = Math.min(8, 6 * (1 + 0.35 * S.eff));
-      v = M.vb || (M.vb = { jaw: 0, premax: 0, op: 0, br: 0 }); v.jaw = k * mpulse(th) * jamp; v.op = k * mpulse(th - 0.40) * oamp; v.br = k * mpulse(th - 0.35) * 3;
+      const LB = M.levels ? M.levels.breathe : null, jamp = LB ? LB.jaw * (1 + 0.2 * S.eff) : 5 + 1.0 * S.eff, oamp = LB ? LB.op * (1 + 0.2 * S.eff) : Math.min(8, 6 * (1 + 0.35 * S.eff));
+      v = M.vb || (M.vb = { jaw: 0, premax: 0, op: 0, br: 0 }); v.jaw = k * mpulse(th) * jamp; v.op = k * mpulse(th - 0.40) * oamp; v.br = LB ? 0 : k * mpulse(th - 0.35) * 3;
     }
   }
   M.evn = name; S.jawAng = v.jaw * D2R; S.opAng = v.op * D2R; mouthApply(v);
@@ -1131,10 +1474,58 @@ function anatGoldfish(root, sm, bs) {
   setupAnat();
 }
 // ---- betta: eyes (separate mesh, split per eye), operculum + jaw + dorsal/anal rays (new bones, weights taken from the nearby verts) ----
+// ================= BETTA 3D GILLS (betta-gills3d.glb; plan droidware-server/fish/betta-3d-gills Rev 3, reviews r1 + r2 adopted word for word) =================
+// The GLB splits each gill cover along its sculpted crease (26 twin vertices APPENDED after the original 3,699, so original vertex i stays vertex i) and carries a modelled gill chamber in ONE gill* node
+// (tube + arches + filaments + cover inner face + the web/membrane), vertex colours, skinned to joint 51 (the head) with weight 1. Per-vertex attributes: _GILLW (0..1 flap weight; body twins + flap faces + inner face + web edge),
+// _GILLC (uint8, 2 = the body-side strip along the cut: head-rigid); the older betta-gills3d*.glb files also carry _GILLSWAY (1 on the filaments), which the page no longer reads (the simple build has no filaments, so the sway uniform and shader patch were removed 2026-10-15). The GLB adds NO bones. No texture. The old _PART/_WGT path is not used.
+//   opR / opL are procedural bones under the head (Bone006), created in the slot today's procedural gill bones take, on the anatomical hinge axis H0 -> H1 (mouthRig-style landmarks in geometry.userData.gills3d), +theta = outward on BOTH sides
+//   (axis = -normalize(H1 - H0), because anatStep applies -side * theta).  _GILLW goes to opR/opL, the remainder keeps the vertex's loaded bones (legacy joints 45-50 -> head, for flap / class-2 vertices ONLY: r2 M-E); every other vertex is untouched.
+//   breathing = today's phase (rate / lag unchanged): peak = gill preset (12) x (1 + 0.35 x effort) = 16.2 deg at effort 1;  flare (preset gflare 1) = a smoothstep 0.25 s up, 0.6 s hold, 0.25 s down to 45 deg about every 20-60 s with its OWN PRNG state S.frng; op = max(breathing, flare).
+const GILL_LEG = [45, 46, 47, 48, 49, 50];
+function frRnd(S) { let a = (S.frng = (S.frng + 0x6D2B79F5) | 0); let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }   // fwRnd's mulberry32 step on the flare's OWN state: FW.rng (fin flicks) and Math.random are never touched (r2 M-D)
+function gillInit(S) { S.frng = (0x7f4a7c15 ^ (F.i * 7919)) | 0; S.fl = { due: (S.ts || 0) + 20 + 40 * frRnd(S), act: null }; }   // the interval is drawn ONCE when a flare is scheduled (here and when one ends), never redrawn while it is deferred
+function gills3dBones(sm, head, nb, ops, G3, legacy, xm, Mr) {
+  const V3 = THREE.Vector3, at = a => new V3(...a), g = sm.geometry, GW = g.attributes._gillw, GCa = g.attributes._gillc, oldSI = g.attributes.skinIndex, oldSW = g.attributes.skinWeight, pa = g.attributes.position;
+  const headIndex = sm.skeleton.bones.indexOf(head), op = {}, pt = new V3();
+  for (const [sg, k] of [[1, "R"], [-1, "L"]]) {
+    op[k] = mkBone("op" + k, head, at(G3.H0[k]), "op", { side: sg, skipWall: true });
+    op[k].userData.ax[1] = at(G3.H1[k]).sub(at(G3.H0[k])).normalize().negate();   // r1 M5: -normalize(H1 - H0) of each side's own landmarks
+    nb.push(op[k]); F.AN.ops.push({ bone: op[k], side: sg });
+  }
+  ops.unshift({ set: i => {
+    const gw = GW.getX(i), gc = GCa ? GCa.getX(i) : 0;
+    if (!(gw > 0)) return gc === 2 ? [[headIndex, 1]] : null;   // class 2 = the body-side strip along edge A: head-rigid, so the chamber's mouth meets it (r1 M6, plan A2); every other vertex keeps its loaded weights (r2 M-E)
+    const r = new Map(); for (let k = 0; k < 4; k++) { const j = oldSI.getComponent(i, k), w = oldSW.getComponent(i, k); if (w > 0) { const jj = legacy.has(j) ? headIndex : j; r.set(jj, (r.get(jj) || 0) + w * (1 - gw)); } }
+    const res = [...r.entries()].sort((a, b) => b[1] - a[1]); if (res.length > 3) res.length = 3;   // the op bone keeps its slot (4 influences at most)
+    res.push([op[pt.fromBufferAttribute(pa, i).applyMatrix4(Mr).x >= xm ? "R" : "L"], gw]); return res; } });
+  F.AN.gills3d = { ops: op, headIndex, G3 };
+  F.AN.opInfo = { gills3d: true, H0: G3.H0, H1: G3.H1 };
+}
+function gills3dMeshOps(gm, xm, Mr) {   // the gill* mesh (rigid parts: joint 51 weight 1; web + inner face: _GILLW follows the cover) passes through reskin like the body and the eyes (r1 M2); each mesh's closure reads its OWN _gillw
+  const G = F.AN.gills3d; if (!G) return [];
+  const g = gm.geometry, GW = g.attributes._gillw, pa = g.attributes.position, pt = new THREE.Vector3();
+  return [{ set: i => { const gw = GW.getX(i); if (!(gw > 0)) return null; return [[pt.fromBufferAttribute(pa, i).applyMatrix4(Mr).x >= xm ? G.ops.R : G.ops.L, gw], [G.headIndex, 1 - gw]]; } }];
+}
+function gills3dFinish(gillMeshes) {
+  const G = F.AN.gills3d, S = F.AN.S; G.meshes = gillMeshes;
+  for (const gm of gillMeshes) {
+    gm.frustumCulled = false;   // tiny, inside the head, skinned: never culled away from a fish that is on screen
+  }
+  gillInit(S);
+}
+function gills3dFlare(S) {   // flare angle (rad) for this frame; advances the flare state on S.ts (own sim clock)
+  const st = S.fl; if (!st || !(AT("gflare", 0) > 0)) return 0;
+  const ts = S.ts;
+  if (!st.act && ts >= st.due && !(F.atWall || Math.abs(F.PUSH.v) > 1e-4)) st.act = { t0: ts };   // starts only when the betta is not in a wall push-off (the page's own predicate), re-checked every frame while deferred
+  if (!st.act) return 0;
+  const u = ts - st.act.t0, UP = 0.25, HOLD = 0.6, DN = 0.25; let a;
+  if (u < UP) a = ss01(0, 1, u / UP); else if (u < UP + HOLD) a = 1; else if (u < UP + HOLD + DN) a = 1 - ss01(0, 1, (u - UP - HOLD) / DN); else { st.act = null; st.due = ts + 20 + 40 * frRnd(S); return 0; }
+  return a * 45 * D2R;   // peak 45 deg ABSOLUTE (not x effort)
+}
 function rigBetta(root) {
   const OFF = (Q.get("anoff") || "").split(",");   // debug: ?anoff=eye,op,jaw,rays skips those parts
   root.updateMatrixWorld(true);
-  const V3 = THREE.Vector3, meshes = []; root.traverse(n => { if (n.isSkinnedMesh) meshes.push(n); });
+  const V3 = THREE.Vector3, meshes = [], gillMeshes = []; root.traverse(n => { if (n.isSkinnedMesh) (/^gill/.test(n.name) ? gillMeshes : meshes).push(n); });   // gill* nodes (betta-gills3d) are taken out BEFORE the vertex-count sort: body = [0], eye = [1] exactly as today (r1 A6)
   if (meshes.length < 1 || !meshes[0].skeleton) return;
   meshes.sort((a, b) => b.geometry.attributes.position.count - a.geometry.attributes.position.count);
   const body = meshes[0], eyeM = meshes[1] || null, skel0 = body.skeleton, byName = {};
@@ -1157,9 +1548,15 @@ function rigBetta(root) {
     [1, -1].forEach((sg, h) => { const c = half[h].getCenter(new V3()); (F.AN.eyeInfo = F.AN.eyeInfo || {})[sg] = { c: c.toArray().map(v => +v.toFixed(3)), size: half[h].getSize(new V3()).toArray().map(v => +v.toFixed(3)) }; const eb = mkBone("eye" + (sg > 0 ? "R" : "L"), head, c, "eye", { side: sg, skipWall: true }); nb.push(eb); F.AN.eyes.push({ bone: eb, side: sg });
       opsEye.push({ bone: eb, fn: (i, p) => (p.x > xe) === (sg > 0) ? 1 : 0 }); });
   }
+  const MR = body.geometry.userData.mouthRig;
+  const mouthParts = !!(MR && body.geometry.attributes._part && body.geometry.attributes._wgt);
+  if (mouthParts) { if (MR.species === "betta" && MR.version === 2) mouthBonesBetta2(body, head, nb, opsBody, MR); else mouthBones(body, head, nb, opsBody, MR); }   // v2 betta data (betta-mouth2.glb) before the goldfish-derived path
   // --- operculum: the plate the old gill bones cover; hinge = its front-upper edge ---
   const OPB = { 1: ["Bone046", "Bone048", "Bone050"], [-1]: ["Bone047", "Bone049", "Bone051"] };
-  for (const sg of OFF.includes("op") ? [] : [1, -1]) {
+  const G3 = !mouthParts && body.geometry.userData.gills3d && body.geometry.attributes._gillw && gillMeshes.length ? body.geometry.userData.gills3d : null;   // betta-gills3d.glb only: its own gills branch below; the old _PART/_WGT path (which switches the approved jaw off) is never used
+  const legacyG = idxOf(["Bone046", "Bone048", "Bone050", "Bone047", "Bone049", "Bone051"]);   // legacy gill-cover joints 45-50 (NOT 52/53 = the jaw)
+  if (G3 && !OFF.includes("op")) gills3dBones(body, head, nb, opsBody, G3, legacyG, xm, Mr);   // opR / opL on the H0->H1 axis, in the slot today's op bones take (right after the eyes): same bone count, same bone order
+  for (const sg of (mouthParts || G3 || OFF.includes("op")) ? [] : [1, -1]) {
     const set = idxOf(OPB[sg]); const mn = new V3(1e9, 1e9, 1e9), mx = new V3(-1e9, -1e9, -1e9); let n = 0, xh = 0;
     for (let i = 0; i < nV; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (sg * (pt.x - xm) > 0 && oldW(i, set) > 0.35) { mn.min(pt); mx.max(pt); n++; xh = Math.max(xh, sg * (pt.x - xm)); } }
     if (n < 10) continue;
@@ -1169,12 +1566,31 @@ function rigBetta(root) {
     F.AN.opInfo = F.AN.opInfo || {}; F.AN.opInfo[sg] = { zc, yc, rz, ry, hp: hp.toArray().map(v => +v.toFixed(3)), n };
   }
   // --- jaw: lower jaw = the snout below the mouth line (tip → back-down slope), hinge behind and below the mouth; sizes are in eye diameters ---
-  if (!OFF.includes("jaw")) {
+  if (!mouthParts && !OFF.includes("jaw")) {
     let tipY = 0, tipZ = -1e9; for (let i = 0; i < nV; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (pt.z > tipZ) { tipZ = pt.z; tipY = pt.y; } }
-    const ed = F.AN.eyeInfo ? F.AN.eyeInfo[1].size[1] : 0.24, hp = new V3(xm, tipY - 1.3 * ed, tipZ - 1.7 * ed), slope = AT("jslope", 0.55);
+    // betta jaw 2026-10-12 (rule = droidware-server/fish/betta-mouth-research §3a/§6.1, measured landmarks in the snout-tip frame; tip = max-z vertex = the chin):
+    //   hinge = the sculpted mouth corner (rictus) = tip + (0, -0.1122, -0.0951); jaw skin = in front of / below the separator polyline T(1.625,2.805) R(1.459,2.778) J(1.33,2.665) V(1.17,2.60) (research frame, tip = (1.5712, 2.8736));
+    //   hard (0.01 band) along T-R = the sculpted lip line, 0.05 band along R-J-V; |x| fade 0.5->0.9 ed keeps it a lower-jaw strip. Nothing above the lip line, nothing behind the polyline.
+    const ed = F.AN.eyeInfo ? F.AN.eyeInfo[1].size[1] : 0.24, slope = AT("jslope", 0.55);
+    const hz = tipZ - 0.0951, hp = new V3(xm, tipY - 0.1122, hz);
+    const PL = [[0.0538, -0.0686], [-0.1122, -0.0951], [-0.2412, -0.2086], [-0.4012, -0.2736]];   // (dy, dz) from the tip
+    const zl = dy => { for (let k = 0; k < 3; k++) { const A = PL[k], B = PL[k + 1]; if (dy <= A[0] && dy >= B[0]) return A[1] + (B[1] - A[1]) * (dy - A[0]) / (B[0] - A[0]); } return dy < PL[3][0] ? PL[3][1] : 1e9; };   // above T: 1e9 -> weight 0
     const jb = mkBone("jaw", head, hp, "jaw", { skipWall: true }); nb.push(jb); F.AN.jaw = { bone: jb }; F.AN.noseTip = [+tipZ.toFixed(3), +tipY.toFixed(3)];
-    opsBody.push({ bone: jb, fn: (i, p) => ss01(0, -0.45 * ed, p.y - (tipY - (tipZ - p.z) * slope)) * ss01(tipZ - 2.7 * ed, tipZ - 1.3 * ed, p.z) * ss01(1.2 * ed, 0.5 * ed, Math.abs(p.x - xm)) * ss01(-4.0 * ed, -3.4 * ed, p.y - tipY) });
+    opsBody.push({ bone: jb, fn: (i, p) => { const dy = p.y - tipY, dz = (p.z - tipZ) - zl(dy); if (dz > 1e8) return 0; const bnd = dy > PL[1][0] ? 0.01 : 0.05;
+      return ss01(-0.004, bnd, dz) * ss01(PL[3][0] - 0.08, PL[3][0], dy) * ss01(0.9 * ed, 0.5 * ed, Math.abs(p.x - xm)); } });   // research-rule lower jaw
     F.AN.jawInfo = { hp: hp.toArray().map(v => +v.toFixed(3)), ed }; }
+  // --- spine bend profile (betta, 2026-10-14 tail hinge; replaces the 2026-10-12 peduncle profile, ped=0 = the plain pre-peduncle profile, every joint gain 1) ---
+  //   Chain (rest z, tw): Bone 2.41/.08, 002 1.91/.19, 003 1.11/.36, 004 .55/.48, 005 -.07/.62, 039 -.50/.71 = the BODY joints (nose z 2.87, skin ends z -.8). 040, 042, 044 (+ leaves 041, 043, 045) are three sibling RAY chains of the caudal fin
+  //   under 039 (fin root z -.65): the fin takes NO wave/C-bend of its own (gain tgv = 0) - it rides rigidly on 039 and moves only through the existing soft drag springs (finStep), so its three lobes cannot fold against each other.
+  //   Two gains per joint (stepFish): u.spg on the travelling WAVE (the swim: lateral displacement of the rear body joints back to the pre-peduncle level, +-15 %, signed head-to-tail-base bend rms equal to the old one) and u.spb on the C-BEND
+  //   (turns: curv(tw) peaks at the tail base, so a plain gain of 1 puts 18-19 deg on 039; spb spreads it over 003..039, every joint <= 14 deg in the hardest turns, <= 13.6 deg in the four test turns).
+  //   The bend peaks inside the body (005, 11.7 % of the body length ahead of the fin root, 28 % of the bend) and falls off toward 039; no joint carries more than 35 %. Fit: work-goldfish/betta-tailhinge/fit_gains.py.
+  //   URL: ped=0 off, tg0 tg2 tg3 tg4 tg5 tg39 (wave gains), tb3 tb4 tb5 tb39 (C-bend gains), tgv (fin-ray bones).
+  if (AT("ped", 1) > 0) { const G = { Bone: AT("tg0", 0.57), Bone002: AT("tg2", 0.88), Bone003: AT("tg3", 1.4), Bone004: AT("tg4", 1.55), Bone005: AT("tg5", 1.4), Bone039: AT("tg39", 1.05) },
+      GB = { Bone: 1, Bone002: 1, Bone003: AT("tb3", 1.7), Bone004: AT("tb4", 1.35), Bone005: AT("tb5", 0.8), Bone039: AT("tb39", 0.65) };
+    for (const n in G) { const b = B(n); if (b) { b.userData.spg = G[n]; b.userData.spb = GB[n]; } }
+    for (const n of ["Bone040", "Bone041", "Bone042", "Bone043", "Bone044", "Bone045"]) { const b = B(n); if (b) b.userData.spg = b.userData.spb = AT("tgv", 0); } }
+  F.TCPL = AT("tcpl", 0.85);   // betta caudal-veil fan coupling (finStep / tailCouple); 0 = independent ray springs as before
   // --- dorsal + anal rays: replace the old coarse fin chains by a fan of new ray chains ---
   const spineB = ["Bone001", "Bone002", "Bone003", "Bone004", "Bone005"].map(B).filter(Boolean);
   const FINSETS = [{ g: "dorsal", up: 1, names: ["Bone018", "Bone021", "Bone022", "Bone019", "Bone023", "Bone024", "Bone020", "Bone025", "Bone026"], N: Math.round(AT("nd", 8)), nj: 3 },
@@ -1204,14 +1620,95 @@ function rigBetta(root) {
     opsBody.push({ from: set, to: toOps }); for (const n of FS.names) if (B(n)) { B(n).userData.dead = true; dead.push(B(n)); }
     F.AN.rays.push(...rayRecs);
   }
-  reskin(eyeM ? [body, eyeM] : [body], nb, m => m === body ? opsBody : opsEye); if (Q.get("anatvis") === "1") anatVis(eyeM ? [body, eyeM] : [body]); finishAnat(nb);
+  reskin([body, ...(eyeM ? [eyeM] : []), ...gillMeshes], nb, m => m === body ? opsBody : (m === eyeM ? opsEye : gills3dMeshOps(m, xm, Mr))); if (Q.get("anatvis") === "1") anatVis(eyeM ? [body, eyeM] : [body]); finishAnat(nb);   // gillMeshes = [] for every model but betta-gills3d (then identical to the old call)
   // --- pectoral fins: reuse the existing bones (root → mid → 2 tips), driven by the stroke instead of the clip/drag springs ---
   for (const [sg, nm] of [[1, ["Bone010", "Bone012", "Bone014", "Bone016"]], [-1, ["Bone011", "Bone013", "Bone015", "Bone017"]]]) {
     const bb = nm.map(B); if (bb.some(v => !v)) continue; bb.forEach(b => { b.userData.own = true; F.AN.own.push(b); });
     bb.forEach(b => { const q = new THREE.Quaternion(), pq = new THREE.Quaternion(); b.getWorldQuaternion(q); b.userData.ax = AXV.map(v => v.clone().applyQuaternion(q.clone().invert())); });
     F.AN.pecs.push({ side: sg, hinge: bb[0], subs: [{ bones: [bb[1], bb[2]], fan: 0.35 }, { bones: [bb[3]], fan: -0.35, from: bb[1] }], simple: true, parentOf: [[bb[1], bb[0]], [bb[2], bb[1]], [bb[3], bb[1]]] });
   }
-  F.AN.dead = dead; setupAnat();
+  const PELV = AT("pelv", 1) > 0 ? pelvicFind(body, Mr, xm, wp, B) : null;   // 2026-10-14: the pelvic fin sheet (found on the ORIGINAL weights, before flankDamp strips them)
+  const STEM = AT("stem", 1) > 0;   // 2026-10-14 tail hinge: Bone039 is the last BODY joint, not a legacy pelvic bone - flankDamp used to strip all of its skin weight (stem skin then hung rigidly on 005, fin on 040); stem=0 = the old behaviour
+  if (AT("flk", 1) > 0) flankDamp(body, Mr, xm, spineB, wp, ["Bone009", "Bone027", "Bone028", "Bone029", "Bone030", "Bone031", "Bone032", STEM ? null : "Bone039", "Bone046", "Bone047", "Bone048", "Bone049", "Bone050", "Bone051"].map(n => n && B(n)).filter(Boolean));
+  if (PELV) pelvicApply(body, PELV, B);
+  if (STEM) finRootStrip(body, Mr, wp, ["Bone", "Bone002", "Bone003", "Bone004", "Bone005", "Bone039"].map(B).filter(Boolean), B("Bone040"), B("Bone006"), B("Bone041"));
+  F.AN.dead = dead; setupAnat(); if (F.AN.gills3d) gills3dFinish(gillMeshes);
+  if (AT("bfw", 1) > 0) { F.FW = fwInit(); F.PELVC = ["Bone029", "Bone030", "Bone031", "Bone032"].map(B).filter(Boolean); F.PELVK = { 1: B("Bone027"), [-1]: B("Bone028") }; }   // betta fin work (fwStep / fwPitch / anatStep): bfw=0 = the old continuous pumping and free pitch
+}
+// PELVIC FIN (long lower front fins) COMPLIANCE (2026-10-14): the fin sheet hung on the shared root Bone009 (upper two thirds) and on the leaf Bone031/032 (bottom third). betta-chill's flankDamp then took Bone009's weight off every vertex with
+// |x| < 0.17 (to keep the belly still), which is the whole upper part of the sheet -> it hung rigidly on Bone001, only the leaf flowed. And the legacy spring only drove LEAF bones (tipOf gives a non-leaf bone its own position = no flow
+// = no torque). Now: the sheet (vertices below the belly cut that carry pelvic weight on the original rig) is re-skinned along the chain root 009 (stays attached, first ~20 % of the fin length) -> mid joint 029/030 -> leaf 031/032 with smooth
+// weights, the mid and root joints are drag-driven too (setupFins: tipB), with drag gain / stiffness rising root -> tip. The belly above the cut keeps flankDamp. URL: pelv=0 = old; pelvg0/g1/g2 = drag gain root/mid/leaf, pelvt0/t1 = flex start/full.
+function pelvicFind(body, Mr, xm, wp, B) {
+  const bA = B("Bone009"), bR = [B("Bone029"), B("Bone031")], bL = [B("Bone030"), B("Bone032")]; if (!bA || bR.some(b => !b) || bL.some(b => !b)) return null;
+  const sk = body.skeleton, pa = body.geometry.attributes.position, si = body.geometry.attributes.skinIndex, sw = body.geometry.attributes.skinWeight, n = pa.count;
+  const set = new Set(["Bone009", "Bone027", "Bone028", "Bone029", "Bone030", "Bone031", "Bone032"].map(nm => sk.bones.indexOf(B(nm))).filter(i => i >= 0));
+  const yT = (wp(bR[0]).y + wp(bR[1]).y) / 2, zA = wp(bA).z, pt = new THREE.Vector3(), list = []; let yb = 1e9;
+  for (let i = 0; i < n; i++) {
+    pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); if (pt.y >= yT || Math.abs(pt.x - xm) < 0.03 || pt.z < zA - 0.3) continue;   // (belly / anal-fin-base vertices in front of the fin carry a little pelvic weight too: they stay on the body)
+    let wpv = 0; for (let k = 0; k < 4; k++) if (set.has(si.getComponent(i, k))) wpv += sw.getComponent(i, k);
+    if (wpv < 0.4) continue; list.push({ i, side: pt.x > xm ? 1 : -1, y: pt.y }); yb = Math.min(yb, pt.y);
+  }
+  if (list.length < 10) return null;
+  for (const v of list) v.t = clamp((yT - v.y) / (yT - yb), 0, 1);
+  return { list, yT, yb, bones: { A: bA, R: bR, L: bL } };
+}
+function pelvicApply(body, P, B) {
+  const sk = body.skeleton, si = body.geometry.attributes.skinIndex, sw = body.geometry.attributes.skinWeight, ix = b => sk.bones.indexOf(b);
+  const t0 = AT("pelvt0", 0.2), t1 = AT("pelvt1", 0.6), t2 = AT("pelvt2", 0.4), t3 = AT("pelvt3", 0.9);
+  const iA = ix(P.bones.A), iB = { 1: ix(P.bones.R[0]), [-1]: ix(P.bones.L[0]) }, iC = { 1: ix(P.bones.R[1]), [-1]: ix(P.bones.L[1]) };
+  for (const v of P.list) {
+    const wA = 1 - ss01(t0, t1, v.t), wC = ss01(t2, t3, v.t), wB = Math.max(0, 1 - wA - wC), tot = wA + wB + wC;
+    si.setXYZW(v.i, iA, iB[v.side], iC[v.side], 0); sw.setXYZW(v.i, wA / tot, wB / tot, wC / tot, 0);
+  }
+  si.needsUpdate = sw.needsUpdate = true; F.AN.pelvInfo = { n: P.list.length, yT: +P.yT.toFixed(3), yb: +P.yb.toFixed(3) };
+  for (const nm of ["Bone009", "Bone029", "Bone030", "Bone031", "Bone032"]) { const b = B(nm); if (b) b.userData.pelv = nm === "Bone009" ? 0 : (nm === "Bone029" || nm === "Bone030" ? 1 : 2); }   // joint level: root / mid / leaf
+}
+// CAUDAL FIN ROOT BAND (2026-10-14 tail hinge): beyond the root band the caudal fin takes NO body-joint (spine) weight: its skin hangs on the three ray chains (040/041, 042/043, 044/045) only, i.e. it rides on the last body joint (039) through
+// the hierarchy and flows through the soft drag springs further out, instead of being skinned to several body joints that bend by different angles (= a crease line). Spine weight of every vertex is scaled by 1 - smoothstep(b0, b1, d),
+// d = distance aft of the fin root joint (Bone040) along the body axis, b0/b1 = frb0/frb1 x body length (0.05 / 0.11); the removed weight goes to the vertex's other bones in proportion (or to the ray root Bone040).
+function finRootStrip(body, Mr, wp, spineB, root, headB, tipB) {
+  if (!root || !headB || !tipB || !spineB.length) return;
+  const sk = body.skeleton, pa = body.geometry.attributes.position, si = body.geometry.attributes.skinIndex, sw = body.geometry.attributes.skinWeight, n = pa.count;
+  const sp = new Set(spineB.map(b => sk.bones.indexOf(b))), rIdx = sk.bones.indexOf(root), r = wp(root), hp = wp(headB), L0 = hp.distanceTo(wp(tipB)) || 1, ax = r.clone().sub(hp).normalize();
+  const b0 = AT("frb0", 0.05) * L0, b1 = AT("frb1", 0.11) * L0, pt = new THREE.Vector3(); let nv = 0, moved = 0, left = 0;
+  for (let i = 0; i < n; i++) {
+    pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); const d = pt.sub(r).dot(ax), g = 1 - ss01(b0, b1, d); if (g >= 1) continue;
+    const id = [0, 0, 0, 0], w = [0, 0, 0, 0]; let rem = 0, keep = 0;
+    for (let k = 0; k < 4; k++) { id[k] = si.getComponent(i, k); w[k] = sw.getComponent(i, k); if (w[k] > 0 && sp.has(id[k])) { rem += w[k] * (1 - g); w[k] *= g; } else keep += w[k]; }
+    if (rem < 1e-6) continue; nv++; moved += rem;
+    if (keep >= 0.1) { for (let k = 0; k < 4; k++) if (!sp.has(id[k])) w[k] += rem * w[k] / keep; }
+    else { let slot = id.indexOf(rIdx); if (slot < 0) { slot = 0; for (let k = 1; k < 4; k++) if (w[k] < w[slot]) slot = k; rem += w[slot]; w[slot] = 0; id[slot] = rIdx; } w[slot] += rem; }
+    let t = 0; for (let k = 0; k < 4; k++) t += w[k]; for (let k = 0; k < 4; k++) { si.setComponent(i, k, id[k]); sw.setComponent(i, k, w[k] / t); }
+  }
+  si.needsUpdate = sw.needsUpdate = true; F.AN.rootBand = { nv, moved: +moved.toFixed(2), b0: +b0.toFixed(3), b1: +b1.toFixed(3), L0: +L0.toFixed(3) };
+}
+// FLANK DAMPING (2026-10-12, betta-chill; interim until the betta mesh is re-weighted): the pectoral hinge bones sit ON the midline and own ~90 % of the skin weight of the shoulder flank, and the dorsal/anal ray bones own ~60 % of the
+// mid-flank weight, so every fin stroke dragged the side of the body with it. For every body vertex the weight of the pectoral bones is scaled by smoothstep(|x-xm|: flkp0 -> flkp1) (body half-width ~0.045 L, fin plate beyond ~0.052 L)
+// and the weight of the dorsal/anal ray bones by smoothstep(|x-xm|: flkr0 -> flkr1) (those fins are single-layer sheets on the midline); the removed weight goes to the vertex's remaining bones in proportion, or to the nearest spine bone.
+// Fin tips/plates (outside those |x| ranges) keep their weight, so the fin motion is unchanged. ?flk=0 off, ?flkp0 ?flkp1 ?flkr0 ?flkr1 (fractions of the body length) to tune.
+function flankDamp(body, Mr, xm, spineB, wp, legB) {
+  const sk = body.skeleton, pa = body.geometry.attributes.position, si = body.geometry.attributes.skinIndex, sw = body.geometry.attributes.skinWeight, n = pa.count;
+  const kind = new Map(); const mark = (b, k) => { const i = sk.bones.indexOf(b); if (i >= 0) kind.set(i, k); };
+  for (const pc of F.AN.pecs) { mark(pc.hinge, 1); for (const sb of pc.subs) for (const b of sb.bones) mark(b, 1); }
+  for (const b of legB) mark(b, 1);   // legacy pelvic / old gill-cover bones (spring-driven) follow the same rule as the pectorals
+  for (const r of F.AN.rays) for (const b of r.bones) mark(b, 2);
+  const sIdx = spineB.map(b => sk.bones.indexOf(b)), sZ = spineB.map(b => wp(b).z);
+  const pt = new THREE.Vector3(); let zlo = 1e9, zhi = -1e9; for (let i = 0; i < n; i++) { pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); zlo = Math.min(zlo, pt.z); zhi = Math.max(zhi, pt.z); }
+  const Lb = zhi - zlo, p0 = AT("flkp0", 0.0344) * Lb, p1 = AT("flkp1", 0.0544) * Lb, r0 = AT("flkr0", 0.0023) * Lb, r1 = AT("flkr1", 0.0172) * Lb;   // thresholds are fractions of the body length (all in the model frame)
+  let nP = 0, nR = 0, moved = 0, axLo = 1e9, axHi = 0, nPv = 0;
+  for (let i = 0; i < n; i++) {
+    pt.fromBufferAttribute(pa, i).applyMatrix4(Mr); const ax = Math.abs(pt.x - xm), gP = ss01(p0, p1, ax), gR = 1 - ss01(r0, r1, ax);
+    const id = [0, 0, 0, 0], w = [0, 0, 0, 0]; let rem = 0, keep = 0, hit = false;
+    for (let k = 0; k < 4; k++) { id[k] = si.getComponent(i, k); w[k] = sw.getComponent(i, k); const kd = kind.get(id[k]); if (kd === 1 && w[k] > 0.02) { nPv++; axLo = Math.min(axLo, ax); axHi = Math.max(axHi, ax); } if (kd && w[k] > 0) { const g = kd === 1 ? gP : gR; if (g < 1) { hit = true; rem += w[k] * (1 - g); w[k] *= g; if (kd === 1) nP++; else nR++; } } }
+    if (!hit) continue;
+    for (let k = 0; k < 4; k++) if (!kind.has(id[k])) keep += w[k];
+    if (keep >= 0.15) { for (let k = 0; k < 4; k++) if (!kind.has(id[k])) w[k] += rem * w[k] / keep; }
+    else { let bj = 0, bd = 1e9; sZ.forEach((z, j) => { const d = Math.abs(z - pt.z); if (d < bd) { bd = d; bj = j; } });
+      let slot = id.indexOf(sIdx[bj]); if (slot < 0) { slot = 0; for (let k = 1; k < 4; k++) if (w[k] < w[slot]) slot = k; rem += w[slot]; w[slot] = 0; id[slot] = sIdx[bj]; } w[slot] += rem; }
+    let t = 0; for (let k = 0; k < 4; k++) t += w[k]; for (let k = 0; k < 4; k++) { si.setComponent(i, k, id[k]); sw.setComponent(i, k, w[k] / t); } moved += rem;
+  }
+  si.needsUpdate = sw.needsUpdate = true; F.AN.flankInfo = { nPv, axLo, axHi, nPecSlots: nP, nRaySlots: nR, moved: +moved.toFixed(2), p0: +p0.toFixed(4), p1: +p1.toFixed(4), r0: +r0.toFixed(4), r1: +r1.toFixed(4), Lb: +Lb.toFixed(3) };
 }
 function setupAnat() {
   F.AN.ready = true;
@@ -1226,7 +1723,7 @@ const wrnd = (t, i) => Math.sin(t * 13.1 + 2.3 * i) * 0.5 + Math.sin(t * 7.7 + 4
 function sacc(E, t, EM, to, kind) { E.from = E.S; E.to = clamp(to, -EM, EM); E.t0 = t; E.dur = 0.03 + 0.05 * Math.min(1, Math.abs(E.to - E.from) / (25 * D2R)) * (0.7 + 0.6 * Math.random()); E.n++; E.cur = { t, kind, amp: (E.to - E.from) / D2R, dur: E.dur }; E.log.push(E.cur); if (E.log.length > 400) E.log.shift(); }
 function anatStep(dt, t) {
   if (!F.AN.ready || !(dt > 0)) return;
-  if (POSE) { for (const b of F.AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } for (const b of F.AN.own) b.quaternion.copy(b.userData.q0); if (F.AN.mouth) mouthPose(); return; }
+  if (POSE) { for (const b of F.AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } for (const b of F.AN.own) b.quaternion.copy(b.userData.q0); if (F.AN.mouth) mouthPose(); else if (window.__jawDeg && F.AN.jaw) rotAx(F.AN.jaw.bone, 0, window.__jawDeg * D2R); if (F.AN.gills3d && window.__opDeg != null) for (const o of F.AN.ops) rotAx(o.bone, 1, -o.side * window.__opDeg * D2R); return; }   // __jawDeg: debug-only forced jaw angle in __pose(true); __opDeg: debug-only forced cover angle (betta-gills3d)
   const S = F.AN.S, E = S.eye; t = S.ts = (S.ts || 0) + dt;   // own sim clock (frame-rate independent: dt is capped, so slow machines slow the fish, not the clock)
   for (const b of F.AN.bones) b.quaternion.copy(b.userData.q0);
   for (const b of F.AN.own) b.quaternion.copy(b.userData.q0);
@@ -1239,18 +1736,20 @@ function anatStep(dt, t) {
     const roomP = EM - E.S, roomN = EM + E.S, sgn = Math.random() < roomP / (roomP + roomN) ? 1 : -1, room = sgn > 0 ? roomP : roomN, amp = Math.min(room, (2 + 23 * Math.pow(Math.random(), 2)) * D2R);
     sacc(E, t, EM, E.S + (amp < 2 * D2R ? -sgn * 2 * D2R * (1 + Math.random()) : sgn * amp), "rand"); E.next = t + (1 + 2 * Math.random()) * EK;
   }
-  if (DISPLAY && Math.abs(F.INTENT) > 0.4 && t > E.cool && E.S * Math.sign(F.INTENT) < 0.5 * EM) { sacc(E, t, EM, Math.sign(F.INTENT) * (7 + 7 * Math.random()) * D2R, "turn"); E.cool = t + 2.2; E.next = Math.max(E.next, t + 0.9); E.cur.intent = F.INTENT; }
+  const GI = F.gz ? F.gz.I : F.INTENT;   // betta gaze bursts: the eyes lead with the new look direction before the body turns
+  if (DISPLAY && Math.abs(GI) > 0.4 && t > E.cool && E.S * Math.sign(GI) < 0.5 * EM) { sacc(E, t, EM, Math.sign(GI) * (7 + 7 * Math.random()) * D2R, "turn"); E.cool = t + 2.2; E.next = Math.max(E.next, t + 0.9); E.cur.intent = GI; }
   if (E.t0 >= 0) { const u = (t - E.t0) / E.dur; if (u < 1) E.S = E.from + (E.to - E.from) * (1 - Math.pow(1 - u, 3)); else { if (E.S !== E.to) { E.S = E.to; for (const s of E.st) s.x += (E.to - E.from) * (Math.random() * 0.22 - 0.06); } } }
   E.vor += -AT("vor", 0.3) * hr * dt; E.vor *= Math.exp(-dt / 0.7); E.vor = clamp(E.vor, -0.5 * EM, 0.5 * EM);
   for (const s of E.st) { for (let n = Math.ceil(dt / 0.004), h = dt / n; n > 0; n--) { s.v += (-1500 * s.x - 2 * 0.45 * 38.7 * s.v) * h; s.x += s.v * h; } }
   (S.eyeAng || (S.eyeAng = [])).length = 0;
-  const ETRK = AT("eyetrk", 0); if (ETRK) E.trk = (E.trk || 0) + ((DISPLAY ? clamp(F.INTENT, -1, 1) * 0.8 + clamp(F.steer, -1, 1) * 0.3 : 0) * ETRK * EM - (E.trk || 0)) * (1 - Math.exp(-dt / 0.22));   // betta flow: gaze leads/tracks the turn (smooth, on top of saccades)
+  const ETRK = AT("eyetrk", 0); if (ETRK) E.trk = (E.trk || 0) + ((DISPLAY ? clamp(GI, -1, 1) * 0.8 + clamp(F.steer, -1, 1) * 0.3 : 0) * ETRK * EM - (E.trk || 0)) * (1 - Math.exp(-dt / 0.22));   // betta flow: gaze leads/tracks the turn (smooth, on top of saccades)
   for (let k = 0; k < F.AN.eyes.length; k++) { const a = clamp(E.S + E.vor + (E.trk || 0), -EM, EM) + E.st[k].x; S.eyeAng.push(a); rotAx(F.AN.eyes[k].bone, 1, a); }
   // ---------------- gills + jaw ----------------
-  const calm = AT("gillrate", 70), hi = AT("gillmax", 120), rate = (calm + (hi - calm) * S.eff) / 60; S.bph += dt * rate * 2 * Math.PI; S.rate = rate * 60;
+  const calm = AT("gillrate", F.GOLD ? 70 : 40), hi = AT("gillmax", F.GOLD ? 120 : 70), rate = (calm + (hi - calm) * S.eff) / 60; S.bph += dt * rate * 2 * Math.PI; S.rate = rate * 60;
   const mouth = 0.5 - 0.5 * Math.cos(S.bph), opn = 0.5 - 0.5 * Math.cos(S.bph - AT("gilllag", 0.4) * 2 * Math.PI);
   const flare = AT("gill", F.GOLD ? 6 : 7) * D2R * (1 + 0.35 * S.eff);
   S.opAng = opn * flare; S.jawAng = mouth * AT("jaw", F.GOLD ? 8 : 7) * D2R;
+  if (F.AN.gills3d) S.opAng = Math.max(S.opAng, gills3dFlare(S));   // betta-gills3d: op = max(breathing, flare)
   if (F.AN.mouth) mouthStep(S, dt, t);
   else { for (const o of F.AN.ops) rotAx(o.bone, 1, -o.side * S.opAng);
   if (F.AN.jaw) rotAx(F.AN.jaw.bone, 0, S.jawAng); }
@@ -1264,6 +1763,12 @@ function anatStep(dt, t) {
     const inner = DISPLAY ? ss01(0.25, 0.8, sg * F.steer) : 0, outerK = DISPLAY ? ss01(0.25, 0.8, -sg * F.steer) : 0;   // turning toward +x: the +x side fin is the inner one
     const amp = (1 - 0.88 * inner) * (1 + 0.25 * outerK);
     x = x * amp; x += (-0.45 - x) * inner; x += (-1.15 - x) * S.brake; sig += (1 - sig) * Math.max(inner, S.brake);
+    if (F.FW && DISPLAY) {   // betta (fin work): the alternating beat above is the ACTIVE stroke (bursts, turns, hovering, wall contact); while coasting the fin rests, trails with the water, and only an occasional one-sided flick moves it
+      const FW = F.FW, A = FW.A, fk = FW.flickX[sg];
+      let xr = FWK.restX + 0.05 * Math.sin(1.3 * t + 2.1 * sg) - clamp(F.yawRate * sg * 0.05, -0.12, 0.12), sr = FWK.restSig;
+      if (fk && fk.pec) { const uu = fk.u, g = uu < 0.35 ? ss01(0, 1, uu / 0.35) : 1 - ss01(0, 1, (uu - 0.35) / 0.65); xr += (0.85 - xr) * g * fk.a; sr = uu < 0.35 ? 1 : 1 - 0.6 * FOLD * Math.pow(Math.sin(Math.PI * clamp((uu - 0.35) / 0.65, 0, 1)), 0.7); }   // power stroke open, recovery feathered
+      x = xr + (x - xr) * A; sig = sr + (sig - sr) * A;
+    }
     const sweep = sg * A_S * x; pc.cmd.sweep = sweep; pc.cmd.sig = sig; pc.cmd.x = x;
     rotAx(pc.hinge, 1, sweep);
     // outer rays trail: each bone follows its parent's absolute sweep angle through a first-order lag (tau grows toward the edge)
@@ -1273,6 +1778,11 @@ function anatStep(dt, t) {
         let rel = a - parA; if (j === 0) rel += (sig - 1) * sub.fan * (pc.simple ? 0.5 : 1);
         rotAx(b, pc.simple ? 1 : 1, rel); parA = a; } }
     pc.measSig = sig;
+  }
+  if (F.FW && DISPLAY && F.PELVK) for (const sd of [1, -1]) {   // betta pelvic flick (one-sided stroke of the whole lower fin about its root joint, swept aft); otherwise the pelvics only waddle with the body (drag springs + the softened clip)
+    const k = F.FW.pelF[sd], bn = F.PELVK[sd]; if (!(k > 1e-3) || !bn) continue;
+    F.outer.getWorldQuaternion(_qa); _ax.set(1, 0, 0).applyQuaternion(_qa); bn.getWorldQuaternion(_qw).invert(); _ax.applyQuaternion(_qw);
+    bn.quaternion.multiply(_qf.setFromAxisAngle(_ax, k * FWK.pelAmp));
   }
   // ---------------- dorsal / anal ray waves ----------------
   const DPH = AT("dph", 30) * D2R, DWA = AT("dwa", 0.16), DG = AT("dg", 0.18), DK = AT("dkw", 22), DZ = AT("dz", 0.4), DFL = AT("dfl", 0.05), CAP = AT("dcap", 0.6), CPL = AT("dcouple", 8);
@@ -1317,7 +1827,17 @@ function anatStep(dt, t) {
     fth: F.FINS.map(f => +f.th.length().toFixed(3)), pec: F.AN.pecs.map(pc => [pc.side, pc.cmd.sweep / D2R, pc.cmd.sig]), ray: F.AN.rays.map(r => r.th.slice()), veil: S.veil || null }); if (S.rec.length > 3000) S.rec.shift(); }
 }
 if (Q.get("debug") === "1") {
-  window.__anat = () => F.AN.S && ({ eyes: F.AN.eyes.length, ops: F.AN.ops.length, jaw: !!F.AN.jaw, pecs: F.AN.pecs.length, rays: F.AN.rays.length, groups: [...new Set(F.AN.rays.map(r => r.group))], opInfo: F.AN.opInfo, jawInfo: F.AN.jawInfo, eyeInfo: F.AN.eyeInfo, noseTip: F.AN.noseTip, finInfo: F.AN.finInfo, saccades: F.AN.S.eye.n, S: { eff: F.AN.S.eff, rate: F.AN.S.rate, pecHz: F.AN.S.pecHz, brake: F.AN.S.brake } });
+  window.__flare = () => { const S = F.AN.S; if (!F.AN.gills3d || !S || !S.fl) return null; S.fl.act = { t0: S.ts || 0 }; return S.fl.act.t0; };   // debug (betta-gills3d): force one flare now (0.25 s up, 0.6 s hold, 0.25 s down, peak 45 deg)
+  window.__gill = () => { const G = F.AN.gills3d; if (!G) return null; let bodyN = 0, bm = null; F.root.traverse(n => { if (n.isSkinnedMesh && !/^gill/.test(n.name) && (!bm || n.geometry.attributes.position.count > bm.geometry.attributes.position.count)) bm = n; }); bodyN = bm.geometry.attributes.position.count;
+    return { gills3d: true, bodyVerts: bodyN, origVertexCount: G.G3.origVertexCount, gill: G.meshes.map(m => ({ name: m.name, verts: m.geometry.attributes.position.count, tris: m.geometry.index.count / 3, material: m.material.name, mats: Array.isArray(m.material) ? m.material.length : 1 })), ops: ["R", "L"].map(k => ({ name: G.ops[k].name, parent: G.ops[k].parent.name, ax: G.ops[k].userData.ax[1].toArray() })), preset: { gill: AT("gill", 0), gflare: AT("gflare", 0) }, flare: F.AN.S.fl ? { due: F.AN.S.fl.due, act: F.AN.S.fl.act } : null }; };   // debug: gill mesh vertex counts against the body's
+  window.__anat = () => F.AN.S && ({ gills3d: !!F.AN.gills3d, eyes: F.AN.eyes.length, ops: F.AN.ops.length, jaw: !!F.AN.jaw, pecs: F.AN.pecs.length, rays: F.AN.rays.length, groups: [...new Set(F.AN.rays.map(r => r.group))], opInfo: F.AN.opInfo, jawInfo: F.AN.jawInfo, eyeInfo: F.AN.eyeInfo, noseTip: F.AN.noseTip, finInfo: F.AN.finInfo, saccades: F.AN.S.eye.n, S: { eff: F.AN.S.eff, rate: F.AN.S.rate, pecHz: F.AN.S.pecHz, brake: F.AN.S.brake } });
+  window.__sim = (sec, dt, seed) => {   // deterministic anat/mouth trace (betta-mouth2 tests): seeded Math.random, reset breathing/eye/mouth state, fixed-step anatStep; synchronous, so the render loop cannot interleave
+    const S = F.AN.S, E = S.eye, M = F.AN.mouth, R0 = Math.random; let s = (seed >>> 0) || 1; Math.random = () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    S.ts = 0; S.bph = 0; S.eff = 0.2; S.rate = 0; if (F.AN.gills3d) gillInit(S); Object.assign(E, { S: 0, from: 0, to: 0, t0: -1, dur: 0.05, next: 1.0, vor: 0, cool: 0, n: 0, log: [], trk: 0 }); E.st.forEach(q => { q.x = 0; q.v = 0; q.pend = 0; });
+    if (M) { M.due = null; M.act = null; M.supp = 0; M.prevTh = 0; M.vb = null; }
+    const out = []; try { for (let k = 0; k < Math.round(sec / dt); k++) { anatStep(dt, 0); out.push({ t: +S.ts.toFixed(4), rate: +S.rate.toFixed(3), jaw: +(S.jawAng / D2R).toFixed(4), op: +(S.opAng / D2R).toFixed(4), mth: M ? [M.cur.jaw, M.cur.premax, M.cur.op, M.cur.br].map(x => +x.toFixed(5)).concat([M.evn]) : null, ph: +S.bph.toFixed(4) }); } } finally { Math.random = R0; }
+    return out;
+  };
   window.__anatRecOn = () => { window.__anatRec = true; F.AN.S.rec.length = 0; };
   window.__anatRecGet = () => F.AN.S.rec;
   window.__anatLog = () => F.AN.S.eye.log;
@@ -1343,6 +1863,55 @@ function stretchB(sm, rest) {   // debug (non-rigged models): edge stretch vs re
 // debug probe (?debug=1): where the head points vs where the fish moves — 3D and on screen
 if (Q.get("debug") === "1") { for (const [k, g] of [["__outer", f => f.outer], ["__P", f => f.P], ["__V", f => f.V]]) Object.defineProperty(window, k, { get: () => g(FISH[0]) });   /* fish 0 */ }
 if (Q.get("debug") === "1") window.__bones = () => F.bones.map(b => [b.name.replace('_Armature',''), +(b.userData.tw || 0).toFixed(2), b.children.some(c => c.isBone) ? '' : 'leaf']);
+if (Q.get("debug") === "1") {   // flank probe (2026-10-12, betta-chill): skinned mid-flank vertex displacement caused by each bone group (full pose minus that group reset to rest), in units of body length, fish-local frame
+  let FL = null;
+  const grpOf = bn => { const r = bn.userData.role; if (F.AN.pecs.some(pc => pc.hinge === bn || pc.subs.some(sb => sb.bones.includes(bn)))) return "pec"; if (r === "pec" || r === "pech") return "pec"; if (r === "ray") return "ray"; if (r === "op") return "op"; if (r === "jaw") return "jaw"; if (r === "eye") return "eye";
+    const fo = F.FINS.find(f => f.bn === bn); if (fo) return fo.tailV ? "tail" : "legfin"; return "spine"; };
+  const posAll = (sm, idx, out) => { F.outer.updateMatrixWorld(true); sm.skeleton.update(); const inv = new THREE.Matrix4().copy(F.outer.matrixWorld).invert(); const L = F.BODY_L * ZOOM || 1;
+    for (let k = 0; k < idx.length; k++) { sm.getVertexPosition(idx[k], _hv).applyMatrix4(sm.matrixWorld).applyMatrix4(inv); out[k * 3] = _hv.x / (ZOOM); out[k * 3 + 1] = _hv.y / ZOOM; out[k * 3 + 2] = _hv.z / ZOOM; } };
+  window.__body = () => {   // betta-chill probe: lateral body bend (largest |bone angle| on the trunk + peduncle, rad), body-bend sum along the spine, roll (deg), pectoral sweep (deg), speed, gait
+    let mx = 0, sum = 0; for (const bn of F.bones) { const u = bn.userData; if (u.role === "tail" || u.role === "fin" || u.own || u.dead) continue; const a = Math.abs(u[F.AX === F.AX ? "a" : "a"] || 0); sum += a; if (a > mx) mx = a; }
+    const e = new THREE.Euler().setFromQuaternion(F.outer.quaternion, "YXZ");
+    return { bendMax: mx, bendSum: sum, roll: e.z / D2R, pec: F.AN.pecs.map(pc => pc.cmd.sweep / D2R), sp: F.speed, gait: F.gait, beat: F.beat, dash: performance.now() / 1000 < F.dashUntil, steer: F.steer };
+  };
+  window.__flankInit = (zf0 = -0.15, zf1 = 0.15, latf = 0.6, xlo = null, xhi = 1e9) => {   // vertices whose rest position is in the mid-body slab (z fraction of body length about the mid), lateral >= latf x the slab's max, away from fins
+    let sm = null; F.outer.traverse(n => { if (n.isSkinnedMesh && (!sm || n.geometry.attributes.position.count > sm.geometry.attributes.position.count)) sm = n; });
+    const bones = sm.skeleton.bones, save = bones.map(b => [b.quaternion.clone(), b.position.clone()]);
+    for (const b of bones) { if (b.userData.q0) b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); }
+    const n = sm.geometry.attributes.position.count, all = new Array(n).fill(0).map((_, i) => i), P = new Float32Array(n * 3); posAll(sm, all, P);
+    let zmin = 1e9, zmax = -1e9; for (let i = 0; i < n; i++) { zmin = Math.min(zmin, P[i * 3 + 2]); zmax = Math.max(zmax, P[i * 3 + 2]); }
+    const Lb = zmax - zmin, zm = (zmin + zmax) / 2, slab = []; let mx = 0;
+    const si = sm.geometry.attributes.skinIndex, sw = sm.geometry.attributes.skinWeight, gw = i => { const o = { spine: 0, legfin: 0, tail: 0, pec: 0, ray: 0, op: 0, jaw: 0, eye: 0 }; for (let k = 0; k < 4; k++) o[grpOf(bones[si.getComponent(i, k)])] += sw.getComponent(i, k); return o; };
+    for (let i = 0; i < n; i++) { const dz = (P[i * 3 + 2] - zm) / Lb; if (dz >= zf0 && dz <= zf1) { slab.push(i); mx = Math.max(mx, Math.abs(P[i * 3])); } }
+    const idx = slab.filter(i => (xlo == null ? Math.abs(P[i * 3]) >= latf * mx : (Math.abs(P[i * 3]) >= xlo && Math.abs(P[i * 3]) <= xhi)) && Math.abs(P[i * 3 + 1]) < 0.3 * Lb);
+    const gsum = { spine: 0, legfin: 0, tail: 0, pec: 0, ray: 0, op: 0, jaw: 0, eye: 0 }, gmax = Object.assign({}, gsum); for (const i of idx) { const w = gw(i); for (const g in w) { gsum[g] += w[g] / idx.length; gmax[g] = Math.max(gmax[g], w[g]); } }
+    bones.forEach((b, i) => { b.quaternion.copy(save[i][0]); b.position.copy(save[i][1]); });
+    FL = { sm, idx, Lb, gsum, gmax, bones, groups: bones.map(grpOf) };
+    return { flankInfo: F.AN.flankInfo, nIdx: idx.length, Lb, zmin, zmax, latMax: mx, meanW: gsum, maxW: gmax, counts: FL.groups.reduce((o, g) => (o[g] = (o[g] || 0) + 1, o), {}), names: bones.map((b, i) => FL.groups[i] + ':' + b.name.replace('_Armature', '') + (F.AN.pecs.some(pc => pc.hinge === b || pc.subs.some(sb => sb.bones.includes(b))) ? '[PEC]' : '')) };
+  };
+  window.__pecDump = () => {   // rest-pose (fish-local, /ZOOM) position + weights of every vertex with pectoral weight, + the pectoral bone rest positions
+    const sm = FL.sm, bones = FL.bones, save = bones.map(b => [b.quaternion.clone(), b.position.clone()]);
+    for (const b of bones) { if (b.userData.q0) b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); }
+    const n = sm.geometry.attributes.position.count, all = new Array(n).fill(0).map((_, i) => i), P = new Float32Array(n * 3); posAll(sm, all, P);
+    F.outer.updateMatrixWorld(true); const inv = new THREE.Matrix4().copy(F.outer.matrixWorld).invert();
+    const bp = bones.map(b => { const v = b.getWorldPosition(new THREE.Vector3()).applyMatrix4(inv); return [v.x / ZOOM, v.y / ZOOM, v.z / ZOOM]; });
+    const si = sm.geometry.attributes.skinIndex, sw = sm.geometry.attributes.skinWeight, rows = [];
+    for (let i = 0; i < n; i++) { let wp = 0; const per = {}; for (let k = 0; k < 4; k++) { const bi = si.getComponent(i, k), w = sw.getComponent(i, k); if (w > 0) per[bi] = (per[bi] || 0) + w; if (FL.groups[bi] === "pec") wp += w; } if (wp > 0.02) rows.push([i, P[i * 3], P[i * 3 + 1], P[i * 3 + 2], wp, per]); }
+    bones.forEach((b, i) => { b.quaternion.copy(save[i][0]); b.position.copy(save[i][1]); });
+    return { rows, bones: bones.map((b, i) => [i, b.name.replace('_Armature', ''), FL.groups[i], b.parent ? bones.indexOf(b.parent) : -1, bp[i]]), pecs: F.AN.pecs.map(pc => ({ side: pc.side, hinge: bones.indexOf(pc.hinge), subs: pc.subs.map(sb => ({ from: sb.from ? bones.indexOf(sb.from) : null, bones: sb.bones.map(b => bones.indexOf(b)) })) })) };
+  };
+  window.__flank = () => {   // per group: mean / max |displacement| over the flank vertices (units of the body length Lb), and lateral (x) part; "all" = every non-spine group at rest
+    const n = FL.idx.length, A = new Float32Array(n * 3), B = new Float32Array(n * 3), out = {}, bones = FL.bones;
+    posAll(FL.sm, FL.idx, A);
+    const doReset = set => { const sv = []; bones.forEach((b, i) => { if (set(FL.groups[i])) { sv.push([i, b.quaternion.clone(), b.position.clone()]); if (b.userData.q0) b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } }); return sv; };
+    const test = (name, set) => { const sv = doReset(set); posAll(FL.sm, FL.idx, B); for (const [i, q, p] of sv) { bones[i].quaternion.copy(q); bones[i].position.copy(p); }
+      let s = 0, m = 0, sx = 0, mx = 0, sy = 0; for (let k = 0; k < n; k++) { const dx = A[k * 3] - B[k * 3], dy = A[k * 3 + 1] - B[k * 3 + 1], dz = A[k * 3 + 2] - B[k * 3 + 2], d = Math.hypot(dx, dy, dz); s += d; m = Math.max(m, d); sx += Math.abs(dx); mx = Math.max(mx, Math.abs(dx)); sy += Math.abs(dy); }
+      out[name] = { mean: s / n / FL.Lb, max: m / FL.Lb, latMean: sx / n / FL.Lb, latMax: mx / FL.Lb, vMean: sy / n / FL.Lb }; };
+    for (const g of ["legfin", "tail", "pec", "ray", "op", "jaw", "spine"]) test(g, x => x === g);
+    test("allfins", x => x !== "spine" && x !== "tail" && x !== "eye");
+    posAll(FL.sm, FL.idx, A); return out;
+  };
+}
 if (Q.get("debug") === "1") window.__finMeta = () => F.FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), !!f.tailV, f.dd, +f.k.toFixed(2), +f.c.toFixed(2), f.g == null ? 0.55 : f.g, f.mx || 1.1]);
 if (Q.get("debug") === "1") window.__fins = () => F.FINS.map(f => [f.bn.name.replace('_Armature',''), +(f.bn.userData.tw||0).toFixed(2), +f.th.length().toFixed(2)]).sort((a,b)=>b[2]-a[2]).slice(0,6);
 if (Q.get("debug") === "1") window.__pop = () => { const o = { ...POP, frameMs: +(lastDt * 1000).toFixed(1), body: +(F.BODY_L * ZOOM).toFixed(2) }; for (const k in POP) POP[k] = 0; return o; };
@@ -1370,19 +1939,23 @@ if (Q.get("debug") === "1") window.__dbg = () => {
 
 if (Q.get("debug") === "1") {
   // rig probes: __stretch() = max/p99.9 edge stretch vs rest (body / fins / tail), __ts() = tail lateral time series, __rig() = layout
-  const TS = []; window.__ts = () => TS; window.__cam = cam; window.__ctl = controls;
+  const TS = []; window.__ts = () => TS; window.__cam = cam; window.__ctl = controls; window.__scene = scene;
   // mouth/gill test hooks (models carrying geometry.userData.mouthRig): __pose(on) freezes the fish at rest; __view(name) sets the test camera (root frame, fov 30, distance 2.33*HL)
+  const mouthMesh = () => F.AN.mouth?.mesh || F.RIG?.sm;
   window.__pose = on => { POSE = !!on; return POSE; };
-  const poseApply = () => { for (const b of F.AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } if (F.AN.mouth) mouthPose(); F.RIG.sm.updateMatrixWorld(true); F.RIG.sm.skeleton.update(); };
+  const poseApply = () => { for (const b of F.AN.bones) { b.quaternion.copy(b.userData.q0); if (b.userData.p0) b.position.copy(b.userData.p0); } if (F.AN.mouth) mouthPose(); mouthMesh().updateMatrixWorld(true); mouthMesh().skeleton.update(); };
   window.__forceMouth = o => { const M = F.AN.mouth; if (!M) return null; M.force = o ? { jaw: o.jaw || 0, premax: o.premax || 0, op: o.op || 0, br: o.br || 0 } : null; poseApply(); return M.force; };
-  window.__mouthEvent = (k, u) => mouthEvent(k, u);
+  window.__mouthEvent = (k, u) => mouthEvent(k, u, F.AN.mouth && F.AN.mouth.levels);
   window.__events = on => { const M = F.AN.mouth; if (!M) return null; M.eventsOn = !!on; if (!on) M.act = null; return M.eventsOn; };
   window.__event = name => { const M = F.AN.mouth; if (!M) return null; M.act = { kind: name, t0: F.AN.S.ts || 0, n: name === "prot" ? 3 : 1 }; return name; };
-  window.__seamGap = () => { const mr = F.RIG.sm.geometry.userData.mouthRig, sm = F.RIG.sm, a = new THREE.Vector3(), b = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); let m = 0, tp = mr.twinPairs;
+  window.__verts = world => { const sm = mouthMesh(), mr = sm.geometry.userData.mouthRig, rm = world ? sm.matrixWorld : new THREE.Matrix4().fromArray(mr.restMap), n = sm.geometry.attributes.position.count, o = new Array(n * 3), v = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); for (let i = 0; i < n; i++) { sm.getVertexPosition(i, v).applyMatrix4(rm); o[i * 3] = v.x; o[i * 3 + 1] = v.y; o[i * 3 + 2] = v.z; } return o; };   // posed vertex positions in the root frame (betta-mouth2 tests)
+  window.__skinW = () => { const g = mouthMesh().geometry, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, n = si.count, o = []; for (let i = 0; i < n; i++) { const r = []; for (let k = 0; k < 4; k++) if (sw.getComponent(i, k) > 0) r.push([si.getComponent(i, k), sw.getComponent(i, k)]); o.push(r); } return o; };
+  window.__seamGap = () => { const mr = mouthMesh().geometry.userData.mouthRig, sm = mouthMesh(), a = new THREE.Vector3(), b = new THREE.Vector3(); sm.updateMatrixWorld(true); sm.skeleton.update(); let m = 0, tp = mr.twinPairs;
     for (let k = 0; k < tp.length; k += 2) { sm.getVertexPosition(tp[k], a); sm.getVertexPosition(tp[k + 1], b); m = Math.max(m, a.distanceTo(b)); } return m; };
   window.__mouth = () => {
-    const M = F.AN.mouth, sm = F.RIG.sm, mr = sm.geometry.userData.mouthRig; if (!M) return null; sm.updateMatrixWorld(true); sm.skeleton.update();
-    const gp = i => sm.getVertexPosition(i, new THREE.Vector3()), lo = mr.lipLo, up = mr.lipUpR2R, D = mr.d;
+    const M = F.AN.mouth, sm = mouthMesh(), mr = sm.geometry.userData.mouthRig; if (!M || mr.version === 2) return null; sm.updateMatrixWorld(true); sm.skeleton.update();
+    const restMap = mr.restMap ? new THREE.Matrix4().fromArray(mr.restMap) : new THREE.Matrix4();
+    const gp = i => sm.getVertexPosition(i, new THREE.Vector3()).applyMatrix4(restMap), lo = mr.lipLo, up = mr.lipUpR2R, D = mr.d;
     const e2 = new THREE.Vector3(0, 1, 0).cross(new THREE.Vector3(1, 0, 0)).set(0, 0, 0); { const d = new THREE.Vector3(...D), x = new THREE.Vector3(1, 0, 0); e2.crossVectors(d, x).normalize(); }
     const poly = up.concat(lo.slice().reverse().slice(1, -1)).map(i => { const p = gp(i); return [p.x, p.dot(e2)]; });
     let area = 0; for (let k = 0; k < poly.length; k++) { const a = poly[k], b = poly[(k + 1) % poly.length]; area += a[0] * b[1] - b[0] * a[1]; } area = Math.abs(area) / 2;
@@ -1391,43 +1964,46 @@ if (Q.get("debug") === "1") {
   };
   // T7: per-edge |ratio-1| by class from _part/_wgt (edge class = its less-rigid endpoint), plus flipped class-0 triangles
   window.__stretchMouth = () => {
-    const sm = F.RIG.sm, g = sm.geometry, mr = g.userData.mouthRig, pt = g.attributes._part, wg = g.attributes._wgt, pa = g.attributes.position, ix = g.index.array, nV = pa.count, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bn = sm.skeleton.bones;
+    const sm = mouthMesh(), g = sm.geometry, mr = g.userData.mouthRig, pt = g.attributes._part, wg = g.attributes._wgt, pa = g.attributes.position, ix = g.index.array, nV = pa.count, si = g.attributes.skinIndex, sw = g.attributes.skinWeight, bn = sm.skeleton.bones;
+    const rest = pa.clone(), restMap = mr.restMap ? new THREE.Matrix4().fromArray(mr.restMap) : new THREE.Matrix4();
+    const rp = new THREE.Vector3(); for (let i = 0; i < nV; i++) { rp.fromBufferAttribute(pa, i).applyMatrix4(restMap); rest.setXYZ(i, rp.x, rp.y, rp.z); }
     sm.updateMatrixWorld(true); sm.skeleton.update();
-    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { sm.getVertexPosition(i, v); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
+    const cur = new Float32Array(nV * 3), v = new THREE.Vector3(); for (let i = 0; i < nV; i++) { sm.getVertexPosition(i, v).applyMatrix4(restMap); cur[i * 3] = v.x; cur[i * 3 + 1] = v.y; cur[i * 3 + 2] = v.z; }
     const TH = { hyoid: 0.35, cheek: 0.55, rostral: 0.55, rictus: 0.55, band: 0.60 };
     const cls = new Array(nV);
     for (let i = 0; i < nV; i++) {
       const p0 = pt.getX(i), w0 = wg.getX(i), w1 = wg.getY(i), sc = pt.getZ(i); let eyeW = 0; for (let k = 0; k < 4; k++) if (bn[si.getComponent(i, k)].userData.role === "eye") eyeW += sw.getComponent(i, k);
-      let c; if (sc !== 0) c = "int"; else if (w0 === 0 && w1 === 0) c = (pa.getZ(i) > 0.5 && eyeW === 0) ? "other" : "skip"; else if (w0 >= 1 - 1e-6) c = "rigid";
-      else if (p0 === 2) c = pa.getY(i) < mr.J[1] ? "hyoid" : "cheek"; else if (p0 === 1) c = "rostral"; else if (p0 === 3 || p0 === 4) c = "rictus"; else c = "band";
+      let c; if (sc !== 0) c = "int"; else if (w0 === 0 && w1 === 0) c = (rest.getZ(i) > 0.5 && eyeW === 0) ? "other" : "skip"; else if (w0 >= 1 - 1e-6) c = "rigid";
+      else if (p0 === 2) c = rest.getY(i) < mr.J[1] ? "hyoid" : "cheek"; else if (p0 === 1) c = "rostral"; else if (p0 === 3 || p0 === 4) c = "rictus"; else c = "band";
       cls[i] = c; }
     let PBL = null; const R = {}, add = (c, r) => { (R[c] || (R[c] = [])).push(r); }, seen = new Set();
     for (let t = 0; t < ix.length; t += 3) for (let k = 0; k < 3; k++) {
       const a = ix[t + k], b = ix[t + (k + 1) % 3], key = Math.min(a, b) * nV + Math.max(a, b); if (seen.has(key)) continue; seen.add(key);
       const ca = cls[a], cb = cls[b]; if (ca === "int" || cb === "int" || ca === "skip" || cb === "skip") continue;
-      const rl = Math.hypot(pa.getX(a) - pa.getX(b), pa.getY(a) - pa.getY(b), pa.getZ(a) - pa.getZ(b)); if (rl < 1e-5) continue;
+      const rl = Math.hypot(rest.getX(a) - rest.getX(b), rest.getY(a) - rest.getY(b), rest.getZ(a) - rest.getZ(b)); if (rl < 1e-5) continue;
       const cl = Math.hypot(cur[a * 3] - cur[b * 3], cur[a * 3 + 1] - cur[b * 3 + 1], cur[a * 3 + 2] - cur[b * 3 + 2]);
       let c; if (ca === "rigid" && cb === "rigid") c = "rigid"; else if (ca === "other" && cb === "other") c = "other";
       else { const bl = [ca, cb].filter(x => TH[x] != null); c = bl.length === 0 ? "rigid-other" : bl.length === 1 ? bl[0] : (TH[bl[0]] >= TH[bl[1]] ? bl[0] : bl[1]); }
-      add(c, Math.abs(cl / rl - 1)); if (c === "rigid-other") (PBL = PBL || []).push([+pa.getX(a).toFixed(3), +pa.getY(a).toFixed(3), +pa.getZ(a).toFixed(3), +(cl / rl - 1).toFixed(3)]); }
+      add(c, Math.abs(cl / rl - 1)); if (c === "rigid-other") (PBL = PBL || []).push([+rest.getX(a).toFixed(3), +rest.getY(a).toFixed(3), +rest.getZ(a).toFixed(3), +(cl / rl - 1).toFixed(3)]); }
     const out = {}; for (const c in R) { const a = R[c].sort((x, y) => x - y); out[c] = { n: a.length, max: +a[a.length - 1].toFixed(4), p99: +a[Math.floor(a.length * 0.99)].toFixed(4) }; }
     // flipped triangles on class-0 surface
     let FL = null, flip = 0, n0 = 0; const A = new THREE.Vector3(), B_ = new THREE.Vector3(), C = new THREE.Vector3(), N1 = new THREE.Vector3(), N2 = new THREE.Vector3();
     for (let t = 0; t < ix.length; t += 3) { const a = ix[t], b = ix[t + 1], c = ix[t + 2]; if (pt.getZ(a) || pt.getZ(b) || pt.getZ(c)) continue; n0++;
-      A.fromBufferAttribute(pa, a); B_.fromBufferAttribute(pa, b).sub(A); C.fromBufferAttribute(pa, c).sub(A); N1.crossVectors(B_, C);
-      A.fromArray(cur, a * 3); B_.fromArray(cur, b * 3).sub(A); C.fromArray(cur, c * 3).sub(A); N2.crossVectors(B_, C); if (N1.dot(N2) <= 0 && N1.lengthSq() > 1e-14) { flip++; (FL = FL || []).push([a, b, c].map(q => [+pa.getX(q).toFixed(3), +pa.getY(q).toFixed(3), +pa.getZ(q).toFixed(3), pt.getX(q), +wg.getX(q).toFixed(2)])); } }
+      A.fromBufferAttribute(rest, a); B_.fromBufferAttribute(rest, b).sub(A); C.fromBufferAttribute(rest, c).sub(A); N1.crossVectors(B_, C);
+      A.fromArray(cur, a * 3); B_.fromArray(cur, b * 3).sub(A); C.fromArray(cur, c * 3).sub(A); N2.crossVectors(B_, C); if (N1.dot(N2) <= 0 && N1.lengthSq() > 1e-14) { flip++; (FL = FL || []).push([a, b, c].map(q => [+rest.getX(q).toFixed(3), +rest.getY(q).toFixed(3), +rest.getZ(q).toFixed(3), pt.getX(q), +wg.getX(q).toFixed(2)])); } }
     out.flipped = flip; out.tris0 = n0; out.pbLoc = PBL; out.flipLoc = FL; return out;
   };
   window.__view = name => {
-    const mr = F.RIG && F.RIG.sm.geometry.userData.mouthRig, root = window.__root; if (!mr || !root) return null;
+    const mr = mouthMesh()?.geometry.userData.mouthRig, root = window.__root; if (!mr || !root || mr.version === 2) return null;
     const V3 = THREE.Vector3, v = a => new V3(...a), S = v(mr.S), d = v(mr.d), C0 = v(mr.C0), dist = 2.33 * mr.HL, X = new V3(1, 0, 0), D = Math.PI / 180;
     let pos, tgt, up = new V3(0, 1, 0);
+    const headCentre = S.clone().lerp(v(mr.Grear.R).add(v(mr.Grear.L)).multiplyScalar(0.5), 0.48);
     const frontPos = S.clone().addScaledVector(d, dist);
     const m = /^(front|frontLow|latR|latL|rearObR|rearObL|top)$/.exec(name); if (!m) return null;
     if (name === "front") { tgt = C0; pos = frontPos; }
     else if (name === "frontLow") { tgt = C0; pos = tgt.clone().add(frontPos.clone().sub(tgt).applyAxisAngle(X, 25 * D)); }
-    else if (name === "latR" || name === "latL") { tgt = new V3(0, -0.05, 0.75); pos = tgt.clone().add(new V3(name === "latR" ? dist : -dist, 0, 0)); }
-    else if (name === "top") { tgt = new V3(0, -0.05, 0.75); pos = tgt.clone().add(new V3(0, dist, 0)); up = new V3(0, 0, 1); }
+    else if (name === "latR" || name === "latL") { tgt = headCentre.clone(); pos = tgt.clone().add(new V3(name === "latR" ? dist : -dist, 0, 0)); }
+    else if (name === "top") { tgt = headCentre.clone(); pos = tgt.clone().add(new V3(0, dist, 0)); up = new V3(0, 0, 1); }
     else { const sg = name === "rearObR" ? 1 : -1; tgt = v(mr.Grear[sg > 0 ? "R" : "L"]); const c10 = Math.cos(10 * D), s10 = Math.sin(10 * D), c35 = Math.cos(35 * D), s35 = Math.sin(35 * D);
       pos = tgt.clone().add(new V3(sg * c35 * c10, s10, -s35 * c10).multiplyScalar(dist)); }
     root.updateWorldMatrix(true, false);
@@ -1436,10 +2012,14 @@ if (Q.get("debug") === "1") {
     return { pos: wp.toArray(), tgt: wt.toArray() };
   };
   window.__wt = null; window.__wtOn = () => { window.__wt = []; window.__wtRec = dt => { const o = {}; headOver(o); const pc = Object.assign({}, POP); for (const k in POP) POP[k] = 0;
-      window.__wt.push({ dt, fi: F.i, P: [F.P.x, F.P.y, F.P.z], V: [F.V.x, F.V.y, F.V.z], VEL: [F.VEL.x, F.VEL.y, F.VEL.z], yaw: Math.atan2(F.V.x, F.V.z), yr: F.yawRate, sp: F.speed, st: F.steer, pop: pc, ho: o, aw: F.atWall, wt: F.wallTgt, tg: [F.TGT.x, F.TGT.y, F.TGT.z], pl: F.pressLat, im: F.impact }); }; };
+      let x0 = 9, x1 = -9, y0 = 9, y1 = -9; for (const bn of F.bones) { _bp.setFromMatrixPosition(bn.matrixWorld).project(cam); x0 = Math.min(x0, _bp.x); x1 = Math.max(x1, _bp.x); y0 = Math.min(y0, _bp.y); y1 = Math.max(y1, _bp.y); }
+      window.__wt.push({ dt, bb: [x0 * cam.aspect, y0, x1 * cam.aspect, y1], L: F.BODY_L * ZOOM, fi: F.i, P: [F.P.x, F.P.y, F.P.z], V: [F.V.x, F.V.y, F.V.z], VEL: [F.VEL.x, F.VEL.y, F.VEL.z], yaw: Math.atan2(F.V.x, F.V.z), yr: F.yawRate, sp: F.speed, st: F.steer, pop: pc, ho: o, aw: F.atWall, wt: F.wallTgt, gt: F.gait, bt: F.beat, du: F.dashUntil, gzp: !!F.gz, tg: [F.TGT.x, F.TGT.y, F.TGT.z], pl: F.pressLat, im: F.impact }); }; };
   window.__wtGet = () => window.__wt;
   window.__ram = (side, y, z) => { z = F.P.z; const w = walls(z); F.TGT.set(side === "l" ? -w.x * 1.25 : side === "r" ? w.x * 1.25 : (y || 0), side === "t" ? w.y * 1.25 : side === "b" ? -w.y * 1.25 : (y || 0), z); F.wallTgt = true; F.nextPick = performance.now() / 1000 + 9; };
   window.__turn = (x, y, z) => { F.TGT.set(x, y, z); F.wallTgt = false; F.nextPick = performance.now() / 1000 + 4; };   // force a C-turn: new swim target
+  window.__bendRec = () => { const bm = F.G.bodyK + (1 - F.G.bodyK) * F.bk; return { phase: F.phase, amp0: (0.08 + 0.92 * F.beat) * bm, bendC: clamp(F.steer * 1.2, -2.6, 2.6) * 0.10 * F.BENDK * F.BEND_SIGN * bm, zoom: ZOOM, ampz: F.AMPS[F.AX], amp: F.AMP, ax: F.AX }; };   // debug: drive signals of the spine bend loop (gain-fit scripts)
+  window.__fw = () => F.FW; window.__fwK = FWK;   // betta fin work state / constants (log of flicks in __fw().log)
+  window.__fwFlick = (kind, side, fin, a) => { const FW = F.FW; if (!FW) return null; const t = performance.now() / 1000; FW.flick = { t0: t, kind, dir: kind === "yaw" ? -side : 1, a: a == null ? 1 : a, side, pel: fin || "pectoral", done: false, psi0: Math.atan2(F.V.x, F.V.z), pit0: FW.pit }; FW.nextOk = t + 1.5; FW.flickLogN++; return FW.flick; };   // debug: fire a flick by hand (kind yaw|pitch, side +1/-1, fin pectoral|pelvic|both)
   let EDG = null; const _cur = [];
   window.__stretch = () => {
     if (!F.RIG) return null;
@@ -1493,7 +2073,7 @@ function toggleFull() {
 if (DISPLAY) {
   addEventListener("keydown", e => { if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFull(); });
   // scroll wheel = zoom = fish size (0.5×–3.5×); the camera and the tank never move
-  addEventListener("wheel", e => { e.preventDefault(); zoomTo = clamp(zoomTo * Math.exp(-e.deltaY * 0.0012), 0.5, 3.5); zoomT = performance.now() / 1000; }, { passive: false });
+  addEventListener("wheel", e => { e.preventDefault(); if (scaleSel(Math.exp(-e.deltaY * 0.0012))) return; zoomTo = clamp(zoomTo * Math.exp(-e.deltaY * 0.0012), 0.5, 3.5); zoomT = performance.now() / 1000; }, { passive: false });   // a selected fish takes the wheel (its own size); with none selected: all fish, as before
   scene.add(ghost);
   const toSettings = () => {
     const C = FISH[0].CORR, u = new URLSearchParams({ display: "0", m: FISH[0].BASE, rx: C.x, ry: C.y, rz: C.z, ...bendQS(), clip: CLIP ? 1 : 0, proc: PROC ? 1 : 0, ...newQS() });
@@ -1505,6 +2085,120 @@ if (DISPLAY) {
   let idleT = 0; const wake = () => { document.body.classList.remove("idle"); clearTimeout(idleT); idleT = setTimeout(() => document.body.classList.add("idle"), 3000); };
   addEventListener("pointermove", wake); wake();
 }
+// ---- select a fish + scale just that fish (2026-10-14; plan droidware-server/fish/select-and-scale-fish) --------------------------------------------------------------------------------
+// Display mode (the tank). Click / tap a fish = select it (ray against its skinned meshes, nearest hit wins; a few pixels of tolerance to the projected skeleton for thin fins, small / far fish and fingers);
+// click / tap on empty water or Esc = deselect. The selected fish takes the wheel, + / - and a two-finger pinch as ITS OWN size multiplier f.UMt (0.4x..2.5x, eased into f.UM like the global zoom); stepFish() uses
+// ZOOM = ZG x SZ x UM for that fish, so its mass, wall margins, head-skin edge test, separation radius and tail brush all follow its size. Nothing selected: wheel and pinch scale ALL fish exactly as before (zoomTo).
+// Per-fish sizes are not stored anywhere (page session only; the fish are random per load). The global size keeps being what it was. "reset sizes" (settings) / key 0 put every fish back to its own 1x.
+const UM_MIN = 0.4, UM_MAX = 2.5, UM_CAP = 3.5, PICK_PX = 8, TAP_PX = 22, SLOP_PX = 8, NOTCH_K = Math.exp(0.0012 * 100);   // pick tolerance mouse / touch (px), click-vs-drag slop (px), one wheel notch (deltaY 100) as a factor
+let SELI = -1, selT = -1e9;       // selected fish index (-1 = none); time of the last input on it (the cue is strong for 2 s, then subtle)
+const umOf = f => Math.min(f.UM, UM_CAP / ZG);                         // the multiplier actually applied: the global zoom x a fish's own multiplier never goes past UM_CAP (= today's largest all-fish zoom), so a scaled fish always still fits the tank; never binds at the default global size (2.5 max)
+const umShown = f => Math.min(f.UMt, UM_CAP / zoomTo);                // ... and what the label shows (the target, in the same terms)
+const selFish = () => (SELI >= 0 && SELI < FISH.length ? FISH[SELI] : null);
+const setSel = i => { SELI = i; selT = performance.now() / 1000; };
+function scaleSel(k) { const f = selFish(); if (!f) return false; f.UMt = clamp(umShown(f) * k, UM_MIN, UM_MAX); selT = performance.now() / 1000; return true; }   // false = nothing selected (caller scales all fish)
+function resetSizes() { for (const f of FISH) f.UMt = 1; selT = performance.now() / 1000; }
+document.getElementById("rsz").onclick = resetSizes;
+const _pkRc = new THREE.Raycaster(), _pkN = new THREE.Vector2(), _pkB = new THREE.Box3(), _pkV = new THREE.Vector3(), _pkW = new THREE.Vector3();
+function segPx(px, py, ax, ay, bx, by) { const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy, u = l2 > 1e-9 ? clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1) : 0; return Math.hypot(px - ax - u * dx, py - ay - u * dy); }
+function pickFish(px, py, tol) {   // -> index into FISH, or -1. Real hit on a skinned mesh first (nearest to the camera wins); else the fish whose projected skeleton passes within tol pixels
+  _pkN.set(px / innerWidth * 2 - 1, -(py / innerHeight) * 2 + 1); _pkRc.setFromCamera(_pkN, cam);
+  let best = -1, bd = 1e9;
+  FISH.forEach((f, k) => {
+    if (!f.root || !f.bones.length) return;
+    _pkB.makeEmpty(); for (const bn of f.bones) _pkB.expandByPoint(_pkV.setFromMatrixPosition(bn.matrixWorld));
+    _pkB.expandByScalar(0.35 * f.BODY_L * ZG * f.SZ * umOf(f));                  // cheap reject first: the box of the joints, grown by the skin + fins
+    if (!_pkRc.ray.intersectsBox(_pkB)) return;
+    if (!f.PK) { f.PK = []; f.root.traverse(n => { if (n.isSkinnedMesh) f.PK.push(n); }); }
+    for (const m of f.PK) { const h = _pkRc.intersectObject(m, false); if (h.length && h[0].distance < bd) { bd = h[0].distance; best = k; } }
+  });
+  if (best >= 0 || !(tol > 0)) return best;
+  let bp = tol;
+  FISH.forEach((f, k) => {
+    for (const bn of f.bones) {
+      if (!bn.parent || !bn.parent.isBone) continue;
+      _pkV.setFromMatrixPosition(bn.matrixWorld).project(cam); _pkW.setFromMatrixPosition(bn.parent.matrixWorld).project(cam);
+      const d = segPx(px, py, (_pkV.x * 0.5 + 0.5) * innerWidth, (0.5 - _pkV.y * 0.5) * innerHeight, (_pkW.x * 0.5 + 0.5) * innerWidth, (0.5 - _pkW.y * 0.5) * innerHeight);
+      if (d < bp) { bp = d; best = k; }
+    }
+  });
+  return best;
+}
+const PT = new Map(); let pinchD = 0, multi = false, travel = 0;   // active pointers on the canvas, last pinch span, "this gesture had 2+ fingers", pointer travel since it went down
+const ptSpan = () => { const [a, b] = [...PT.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+function pickClick(e) {   // the canvas click: true = consumed (it changed / dropped the selection or ended a pinch), false = not for us (fullscreen as before)
+  if (multi) return true;
+  if (travel > SLOP_PX) return false;
+  const k = pickFish(e.clientX, e.clientY, e.pointerType === "touch" || e.pointerType === "pen" ? TAP_PX : PICK_PX);
+  if (k >= 0) { setSel(k); return true; }
+  if (SELI >= 0) { setSel(-1); return true; }
+  return false;
+}
+let GLOW = null, LBL = null, lblTxt = "", lblOp = "";
+if (DISPLAY) {
+  addEventListener("pointerdown", e => {
+    if (e.target !== cv || (e.pointerType === "mouse" && e.button !== 0)) return;
+    if (e.pointerType === "mouse") PT.clear();   // one mouse = one pointer (a missed pointerup must not leave a ghost that turns the next press into a "pinch")
+    PT.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (PT.size === 1) { multi = false; travel = 0; } else if (PT.size === 2) { multi = true; pinchD = ptSpan(); }
+  });
+  addEventListener("pointermove", e => {
+    const p = PT.get(e.pointerId); if (!p) return;
+    travel += Math.hypot(e.clientX - p.x, e.clientY - p.y); p.x = e.clientX; p.y = e.clientY;
+    if (PT.size === 2) {   // two-finger pinch: the span ratio is the size factor - the selected fish, or all fish when none is selected
+      const d = ptSpan(), k = pinchD > 1 ? d / pinchD : 1; pinchD = d;
+      if (k !== 1 && !scaleSel(k)) { zoomTo = clamp(zoomTo * k, 0.5, 3.5); zoomT = performance.now() / 1000; }
+    }
+  });
+  const up = e => { PT.delete(e.pointerId); if (PT.size < 2) pinchD = 0; };
+  addEventListener("pointerup", up); addEventListener("pointercancel", up); addEventListener("blur", () => { PT.clear(); pinchD = 0; });
+  addEventListener("keydown", e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Escape") { if (SELI >= 0) setSel(-1); }
+    else if (e.key === "+" || e.key === "=") scaleSel(NOTCH_K);
+    else if (e.key === "-" || e.key === "_") scaleSel(1 / NOTCH_K);
+    else if (e.key === "0") resetSizes();
+  });
+  LBL = document.getElementById("sel");
+  const cvs = document.createElement("canvas"); cvs.width = cvs.height = 128; const g = cvs.getContext("2d"), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(0.5, "rgba(255,255,255,.45)"); gr.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(cvs); tex.colorSpace = THREE.SRGBColorSpace;
+  GLOW = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color: 0x6fe3ff, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, toneMapped: false, fog: false }));
+  GLOW.visible = false; GLOW.renderOrder = -1; scene.add(GLOW);   // soft halo billboard BEHIND the selected fish (additive, depth-tested: the body stays in front of it)
+}
+function updateSel(t) {   // once per frame after the fish stepped: halo + size label on the selected fish (strong for 2 s after the last input, then subtle)
+  if (SELI >= FISH.length) SELI = -1;
+  const f = selFish();
+  if (!f || !f.bones.length) { if (GLOW.visible) { GLOW.visible = false; LBL.style.display = "none"; } return; }
+  const Le = f.BODY_L * ZG * f.SZ * umOf(f), tn = Math.tan(cam.fov * D2R / 2);
+  let zmin = 1e9, nb = 0; const Wd = f.PKW || (f.PKW = new Float32Array(f.bones.length * 6));   // world points of the fish: every joint + one extrapolated segment past each leaf (the fin / tail tips)
+  for (const bn of f.bones) {
+    _pkV.setFromMatrixPosition(bn.matrixWorld); Wd[nb * 3] = _pkV.x; Wd[nb * 3 + 1] = _pkV.y; Wd[nb * 3 + 2] = _pkV.z; zmin = Math.min(zmin, _pkV.z); nb++;
+    if (bn.parent && bn.parent.isBone && !bn.children.some(c => c.isBone)) { _pkW.setFromMatrixPosition(bn.parent.matrixWorld); _pkV.multiplyScalar(2).sub(_pkW); Wd[nb * 3] = _pkV.x; Wd[nb * 3 + 1] = _pkV.y; Wd[nb * 3 + 2] = _pkV.z; zmin = Math.min(zmin, _pkV.z); nb++; }
+  }
+  const zs = zmin - 0.15 * Le, hh = (CAM0 - zs) * tn, hw = hh * cam.aspect;   // the halo plane sits just behind the farthest point; the points are projected onto it
+  let mx = 0, my = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9; const P = f.PKP || (f.PKP = new Float32Array(f.bones.length * 4));
+  for (let i = 0; i < nb; i++) {
+    _pkV.set(Wd[i * 3], Wd[i * 3 + 1], Wd[i * 3 + 2]).project(cam); P[i * 2] = _pkV.x * hw; P[i * 2 + 1] = _pkV.y * hh; mx += P[i * 2]; my += P[i * 2 + 1];
+    x0 = Math.min(x0, _pkV.x); x1 = Math.max(x1, _pkV.x); y0 = Math.min(y0, _pkV.y); y1 = Math.max(y1, _pkV.y);
+  }
+  mx /= nb; my /= nb; let sxx = 0, sxy = 0, syy = 0; for (let i = 0; i < nb; i++) { const dx = P[i * 2] - mx, dy = P[i * 2 + 1] - my; sxx += dx * dx; sxy += dx * dy; syy += dy * dy; }
+  const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy), ux = Math.cos(ang), uy = Math.sin(ang);   // principal axis of the projected joints = the fish's long axis on the picture
+  let u0 = 1e9, u1 = -1e9, v0 = 1e9, v1 = -1e9; for (let i = 0; i < nb; i++) { const dx = P[i * 2] - mx, dy = P[i * 2 + 1] - my, a = dx * ux + dy * uy, b = -dx * uy + dy * ux; u0 = Math.min(u0, a); u1 = Math.max(u1, a); v0 = Math.min(v0, b); v1 = Math.max(v1, b); }
+  const a = (u1 - u0) / 2, b = Math.max((v1 - v0) / 2, 0.3 * a), cu = (u0 + u1) / 2, cv_ = (v0 + v1) / 2;
+  GLOW.position.set(mx + cu * ux - cv_ * uy, my + cu * uy + cv_ * ux, zs); GLOW.scale.set(2 * (a * 1.2 + 0.05 * a), 2 * (b + 0.28 * a), 1); GLOW.material.rotation = ang;
+  const age = t - selT, k = clamp((age - 2) / 0.8, 0, 1), s = k * k * (3 - 2 * k);          // 0 = just touched … 1 = subtle (after 2 s without input)
+  GLOW.material.opacity = 0.9 - 0.55 * s; GLOW.visible = true;
+  const txt = "size " + umShown(f).toFixed(2) + "×", op = (1 - 0.55 * s).toFixed(2);
+  if (txt !== lblTxt) LBL.textContent = lblTxt = txt;
+  if (op !== lblOp) LBL.style.opacity = lblOp = op;
+  LBL.style.display = "block";
+  const cx = Math.round((x0 + x1) / 4 * innerWidth + innerWidth / 2), top = (0.5 - y1 / 2) * innerHeight, bot = (0.5 - y0 / 2) * innerHeight;   // label above the fish (below it when the fish is at the top edge)
+  const below = top < 34, ly = Math.round(below ? bot + 10 : top - 10);
+  LBL.style.transform = "translate(" + clamp(cx, 50, innerWidth - 50) + "px," + clamp(ly, 4, innerHeight - 4) + "px) translate(-50%," + (below ? "0" : "-100%") + ")";
+}
+if (Q.get("debug") === "1") { window.__sel = () => ({ sel: SELI, um: FISH.map(f => +f.UMt.toFixed(3)), umNow: FISH.map(f => +f.UM.toFixed(3)), scale: FISH.map(f => +f.outer.scale.x.toFixed(3)), eff: FISH.map(f => +(ZG * f.SZ * umOf(f)).toFixed(3)), zg: +ZG.toFixed(3), zoomTo: +zoomTo.toFixed(3), label: LBL ? LBL.textContent : "", labelShown: !!LBL && LBL.style.display === "block", labelOp: lblOp, glow: !!GLOW && GLOW.visible, glowOp: GLOW ? +GLOW.material.opacity.toFixed(2) : 0 });
+  window.__pick = (x, y, tol) => pickFish(x, y, tol); window.__fishPx = i => { const f = FISH[i], v = new THREE.Vector3().copy(f.P).project(cam); return [(v.x * 0.5 + 0.5) * innerWidth, (0.5 - v.y * 0.5) * innerHeight]; }; }
 // ---- frame loop: pauses when the tab is hidden (no rAF, clock reset on return -> no time jump); Low caps at ~30 fps; Auto watches the frame time ----
 let rafId = 0, lastInfo = "";
 const AUTO = { from: 0, w0: 0, n: 0, s: new Float32Array(2048) };
@@ -1521,7 +2215,7 @@ function autoSample(now, ms) {   // Auto: starts High; the median frame time ove
 function stepZoom(dt, t) { ZG += (zoomTo - ZG) * (1 - Math.exp(-dt * 8)); updateGhost(t); }
 const _arrowDir = new THREE.Vector3();
 function stepFish(f, dt, t) {
-  F = f; ZOOM = ZG * f.SZ;   // ZOOM = this fish's effective size (global zoom x per-fish species factor)
+  F = f; f.UM += (f.UMt - f.UM) * (1 - Math.exp(-dt * 8)); ZOOM = ZG * f.SZ * umOf(f);   // ZOOM = this fish's effective size (global zoom x per-fish species factor x its own selected-size multiplier, eased like the global zoom)
   F.corr.rotation.set(F.CORR.x * D2R, F.CORR.y * D2R, F.CORR.z * D2R);
   if (DISPLAY) wander(dt, t);
   else if (SWIM) {                                         // move in a slow horizontal circle + face motion (like the school)
@@ -1533,8 +2227,9 @@ function stepFish(f, dt, t) {
   } else { F.outer.position.set(0, 0, 0); F.outer.quaternion.identity(); ARROW.visible = false; }
   for (const bn of F.bones) if (bn.userData.q0) bn.quaternion.copy(bn.userData.q0);  // rest FIRST each frame → symmetric wave, no accumulation (matches the school)
   if (CLIP && F.mixer && !POSE) F.mixer.update(DISPLAY ? dt * clamp(0.5 + 0.6 * F.beat + 0.9 * Math.abs(F.steer), 0.45, 2) : dt);  // fins flutter harder when stroking/turning
+  if (F.FW && DISPLAY && F.PELVC && CLIP && !POSE) { const kc = 1 - clamp(0.3 + 0.7 * F.FW.A, 0, 1); for (const b of F.PELVC) b.quaternion.slerp(b.userData.q0, kc); }   // betta pelvics: the baked flutter is an active beat; while coasting only a third of it is left (they waddle with the body)
   if (DISPLAY && PROC && F.bones.length > 2) {
-    const amp0 = 0.08 + 0.92 * F.beat, bendC = clamp(F.steer * 1.2, -2.6, 2.6) * 0.10 * F.BENDK * F.BEND_SIGN;   // more flex: the body really curls into a turn
+    const bm = F.G.bodyK + (1 - F.G.bodyK) * F.bk, amp0 = (0.08 + 0.92 * F.beat) * bm, bendC = clamp(F.steer * 1.2, -2.6, 2.6) * 0.10 * F.BENDK * F.BEND_SIGN * bm;   // more flex: the body really curls into a turn
     for (const bn of F.bones) {
       const tw = bn.userData.tw || 0, u = bn.userData;
       if (u.role === "tail" || u.role === "fin" || u.own || u.dead) continue;      // rigged tail/fins: drag springs + ripple only (finStep)
@@ -1543,10 +2238,11 @@ function stepFish(f, dt, t) {
       const wv = Math.sin(F.phase - tw * 5.65) * env;                              // k = 0.9·2π → λ ≈ 1.1 body
       // spring: stiff head … looser tail (natural freq stays ABOVE the beat so the stroke isn't filtered out),
       // under-damped → the tail/fins lag and overshoot on stroke starts, glides and bend changes
+      const sg = u.spg != null ? u.spg : 1, sb = u.spb != null ? u.spb : sg;   // betta per-joint gains (rigBetta, 2026-10-14 tail hinge): sg on the wave, sb on the C-bend; bend peaks inside the body, fin-ray bones 0; goldfish/others: 1
       const k = (1900 - 1550 * Math.min(tw, 0.75)) / ZOOM, c = 2 * Math.sqrt(k) * 0.4;   // stiff head … rubbery rear; bigger body flexes slower
       for (const a of AXES) {                                          // every axis with a non-zero amplitude bends at once (the dominant axis keeps u.a/u.av for wallCollide)
         if (a !== F.AX && !(F.AMPS[a] > 0)) continue;
-        const ka = a === F.AX ? "a" : "a_" + a, kv = a === F.AX ? "av" : "av_" + a, target = wv * F.AMPS[a] * amp0 + bendC * curv * (F.AMP > 0 ? F.AMPS[a] / F.AMP : 0);   // displayed amplitude = applied; the C-bend splits in the same proportion
+        const ka = a === F.AX ? "a" : "a_" + a, kv = a === F.AX ? "av" : "av_" + a, target = wv * F.AMPS[a] * amp0 * sg + bendC * curv * (F.AMP > 0 ? F.AMPS[a] / F.AMP : 0) * sb;   // displayed amplitude = applied; the C-bend splits in the same proportion
         for (let n = Math.ceil(dt / 0.004), sdt = dt / n; n > 0; n--) {     // sub-steps: stable on slow frames
           u[kv] = (u[kv] || 0) + (k * (target - (u[ka] || 0)) - c * (u[kv] || 0)) * sdt; u[ka] = (u[ka] || 0) + u[kv] * sdt;
         }
@@ -1575,6 +2271,7 @@ function loop() {
   if (DISPLAY) stepZoom(dt, t);
   for (const f of FISH) stepFish(f, dt, t);
   ZOOM = ZG;
+  if (DISPLAY) updateSel(t);
   F = FISH[0];
   if (!DISPLAY) controls.update();
   renderer.render(scene, cam);
